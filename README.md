@@ -3,6 +3,7 @@
 
 > **About this fork.** Research projects built on LeWM, alongside the original code:
 > - [`flow_dynamics/`](flow_dynamics/README.md): flow-matching next-latent dynamics (variant B: predictor trunk + flow head; variant A: Dreamer-4-style in-transformer flow), used to get denoising trajectories for an uncertainty proxy. The model code is in `module.py`, `jepa.py` and `train.py` (`model=lewm_flow` / `model=lewm_flow_ar`), backwards compatible with the original LeWM.
+> - [`progress_bridge/`](progress_bridge/README.md): progress-time bridge subgoal planner on frozen LeWM (paused; lives on this branch only).
 > - [`tools/convert_lewm.py`](tools/convert_lewm.py): renames HF-hosted checkpoint encoder keys to the installed ViT naming.
 
 ### Stable End-to-End Joint-Embedding Predictive Architecture from Pixels
