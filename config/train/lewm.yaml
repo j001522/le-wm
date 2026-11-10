@@ -41,3 +41,15 @@ loss:
     kwargs:
       knots: 17
       num_proj: 1024
+
+# Flow-matching dynamics. Only used with model=lewm_flow or model=lewm_flow_ar.
+flow:
+  detach_target: true
+  mse_weight: 1.0          # 0 = pure flow
+  taus_per_token: 4        # head variant: tau samples per context token
+  tau_weight: false        # true: weight x-loss by 0.1 + 0.9*tau
+  ctx_frac: 0.5            # transformer variant: fraction of windows with history at ctx_tau
+  tau_logit_normal: {mean: 0.0, std: 1.0}
+  head: {width: 512, depth: 4}
+  sample: {steps: 10, power: 2.0, ctx_tau: 0.9}   # power>1 = denser steps near tau=1
+  plan: {num_noise: 1, risk_weight: 0.0, seed: 0}

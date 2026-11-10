@@ -1,0 +1,12 @@
+# Variant A (Dreamer 4 style): the predictor itself denoises the next frame token.
+# No MSE head, so the encoder learns only from SIGReg when detach_target is true.
+defaults:
+  - lewm_flow
+  - _self_
+
+flow_variant: transformer
+flow_head: null
+pred_proj: null
+predictor:
+  _target_: module.FlowARPredictor
+  num_frames: ${eval:'${history_size} + 1'}

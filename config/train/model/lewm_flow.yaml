@@ -1,0 +1,17 @@
+# Variant B: LeWM predictor trunk + flow-matching head (x-prediction).
+defaults:
+  - lewm
+  - _self_
+
+flow_variant: head
+flow_head:
+  _target_: module.FlowHead
+  dim: ${embed_dim}
+  width: ${flow.head.width}
+  depth: ${flow.head.depth}
+sample_steps: ${flow.sample.steps}
+sample_power: ${flow.sample.power}
+ctx_tau: ${flow.sample.ctx_tau}
+plan_noise: ${flow.plan.num_noise}
+risk_weight: ${flow.plan.risk_weight}
+plan_seed: ${flow.plan.seed}

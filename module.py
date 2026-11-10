@@ -283,3 +283,81 @@ class ARPredictor(nn.Module):
         x = self.dropout(x)
         x = self.transformer(x, c)
         return x
+
+
+###########################
+## Flow-matching dynamics ##
+###########################
+
+import math
+
+
+class TimeEmb(nn.Module):
+    """Sinusoidal embedding of the flow time tau in [0, 1] -> dim."""
+
+    def __init__(self, dim, freq_dim=256):
+        super().__init__()
+        self.freq_dim = freq_dim
+        self.mlp = nn.Sequential(nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
+
+    def forward(self, tau):
+        """tau: (...,) -> (..., dim)"""
+        half = self.freq_dim // 2
+        f = torch.exp(-math.log(10000) * torch.arange(half, device=tau.device) / half)
+        a = tau[..., None].float() * 1000 * f
+        return self.mlp(torch.cat([a.cos(), a.sin()], -1))
+
+
+class AdaLNResBlock(nn.Module):
+    """Residual MLP block with AdaLN-zero conditioning (identity at init)."""
+
+    def __init__(self, dim, mlp_ratio=4):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, mlp_ratio * dim), nn.SiLU(), nn.Linear(mlp_ratio * dim, dim)
+        )
+        self.ada = nn.Sequential(nn.SiLU(), nn.Linear(dim, 3 * dim))
+        nn.init.zeros_(self.ada[-1].weight)
+        nn.init.zeros_(self.ada[-1].bias)
+
+    def forward(self, x, c):
+        shift, scale, gate = self.ada(c).chunk(3, -1)
+        return x + gate * self.mlp(modulate(self.norm(x), shift, scale))
+
+
+class FlowHead(nn.Module):
+    """Variant B. x-prediction head: (x_tau, tau, h) -> clean next latent.
+    h is the predictor trunk output for the frame, which does not depend on tau.
+    No BatchNorm, so outputs do not depend on the batch."""
+
+    def __init__(self, dim=192, width=512, depth=4):
+        super().__init__()
+        self.inp, self.cond = nn.Linear(dim, width), nn.Linear(dim, width)
+        self.t = TimeEmb(width)
+        self.blocks = nn.ModuleList(AdaLNResBlock(width) for _ in range(depth))
+        self.out = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, dim))
+
+    def forward(self, x_tau, tau, h):
+        """x_tau, h: (..., D); tau: (...,)"""
+        c = self.cond(h) + self.t(tau)
+        y = self.inp(x_tau)
+        for b in self.blocks:
+            y = b(y, c)
+        return self.out(y)
+
+
+class FlowARPredictor(nn.Module):
+    """Variant A (Dreamer 4 style). Token i is a noisy z_i, its condition is
+    a_{i-1} + emb(tau_i), and output i is the clean z_i. Reuses the causal
+    ARPredictor; build with num_frames = history_size + 1."""
+
+    def __init__(self, **kw):
+        super().__init__()
+        self.net = ARPredictor(**kw)
+        self.t = TimeEmb(kw["input_dim"])
+        self.out = nn.Linear(kw.get("output_dim") or kw["input_dim"], kw["input_dim"])
+
+    def forward(self, x, act_prev, tau):
+        """x, act_prev: (B, T, D); tau: (B, T)"""
+        return self.out(self.net(x, act_prev + self.t(tau)))

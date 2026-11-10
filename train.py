@@ -33,12 +33,28 @@ def lejepa_forward(self, batch, stage, cfg):
     ctx_act = act_emb[:, : ctx_len]
 
     tgt_emb = emb[:, n_preds:] # label
-    pred_emb = self.model.predict(ctx_emb, ctx_act) # pred
 
-    # LeWM loss
-    output["pred_loss"] = (pred_emb - tgt_emb).pow(2).mean()
-    output["sigreg_loss"]= self.sigreg(emb.transpose(0, 1))
-    output["loss"] = output["pred_loss"] + lambd * output["sigreg_loss"]  
+    if not self.model.is_flow:
+        # LeWM loss
+        pred_emb = self.model.predict(ctx_emb, ctx_act) # pred
+        output["pred_loss"] = (pred_emb - tgt_emb).pow(2).mean()
+        output["sigreg_loss"]= self.sigreg(emb.transpose(0, 1))
+        output["loss"] = output["pred_loss"] + lambd * output["sigreg_loss"]
+    else:
+        # flow-matching dynamics (+ MSE head as encoder signal, SIGReg on clean embeddings)
+        fc = cfg.flow
+        fl = self.model.flow_loss(
+            emb, act_emb, ctx_len, n_preds, detach_target=fc.detach_target,
+            taus_per_token=fc.taus_per_token, tau_mean=fc.tau_logit_normal.mean,
+            tau_std=fc.tau_logit_normal.std, tau_weight=fc.get("tau_weight", False), ctx_frac=fc.get("ctx_frac", 0.0),
+        )
+        output["flow_loss"] = fl["flow_loss"]
+        mse_pred = fl["mse_pred"]
+        output["pred_loss"] = ((mse_pred - tgt_emb).pow(2).mean()
+                               if mse_pred is not None else torch.zeros((), device=emb.device))
+        output["sigreg_loss"] = self.sigreg(emb.transpose(0, 1))
+        output["loss"] = (output["flow_loss"] + fc.mse_weight * output["pred_loss"]
+                          + lambd * output["sigreg_loss"])
 
     losses_dict = {f"{stage}/{k}": v.detach() for k, v in output.items() if "loss" in k}
     self.log_dict(losses_dict, on_step=True, sync_dist=True)
