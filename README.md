@@ -1,5 +1,10 @@
 
 # LeWorldModel
+
+> **About this fork.** Research projects built on LeWM, alongside the original code:
+> - [`flow_dynamics/`](flow_dynamics/README.md): flow-matching next-latent dynamics (variant B: predictor trunk + flow head; variant A: Dreamer-4-style in-transformer flow), used to get denoising trajectories for an uncertainty proxy. The model code is in `module.py`, `jepa.py` and `train.py` (`model=lewm_flow` / `model=lewm_flow_ar`), backwards compatible with the original LeWM.
+> - [`tools/convert_lewm.py`](tools/convert_lewm.py): renames HF-hosted checkpoint encoder keys to the installed ViT naming.
+
 ### Stable End-to-End Joint-Embedding Predictive Architecture from Pixels
 
 [Lucas Maes*](https://x.com/lucasmaes_), [Quentin Le Lidec*](https://quentinll.github.io/), [Damien Scieur](https://scholar.google.com/citations?user=hNscQzgAAAAJ&hl=fr), [Yann LeCun](https://yann.lecun.com/) and [Randall Balestriero](https://randallbalestriero.github.io/)
