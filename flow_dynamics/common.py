@@ -1,7 +1,7 @@
 """Stage 1 helpers: cached frozen-encoder latents and dynamics-only JEPA models.
 
-Latents come from progress_bridge's cache (`<swm cache>/datasets/<name>_latents_v2.h5`,
-written by progress_bridge/bridge/cache_latents.py): z (N, 192) f16 for every raw frame,
+Latents come from the cache `<swm cache>/datasets/<name>_latents_v2.h5`, written by
+`python -m flow_dynamics.cache_latents --task pusht`: z (N, 192) f16 for every raw frame,
 action (N, A), ep_len, ep_offset. A predictor step spans FRAMESKIP raw frames and its
 action is the row-major flattening of the FRAMESKIP raw actions (as in swm datasets).
 """
@@ -19,8 +19,9 @@ ARTIFACTS = ROOT / "flow_dynamics" / "save"
 SWM = Path.home() / ".stable_worldmodel"
 FRAMESKIP = 5
 TASKS = {
-    "pusht": dict(ckpt="quentinll/lewm-pusht", latents="pusht_expert_train_latents_v2.h5"),
-    "tworoom": dict(ckpt="quentinll/lewm-tworooms", latents="tworoom_latents_v2.h5"),
+    "pusht": dict(ckpt="quentinll/lewm-pusht", dataset="pusht_expert_train",
+                  latents="pusht_expert_train_latents_v2.h5"),
+    "tworoom": dict(ckpt="quentinll/lewm-tworooms", dataset="tworoom", latents="tworoom_latents_v2.h5"),
 }
 
 
