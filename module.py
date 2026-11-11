@@ -361,3 +361,36 @@ class FlowARPredictor(nn.Module):
     def forward(self, x, act_prev, tau):
         """x, act_prev: (B, T, D); tau: (B, T)"""
         return self.out(self.net(x, act_prev + self.t(tau)))
+
+
+#####################################
+## Pixel decoder (visualisation only) ##
+#####################################
+
+
+class PixelDecoder(nn.Module):
+    """Latent (D,) -> image (3, img_size, img_size) in the encoder's input space
+    (ImageNet-normalised). Trained on detached latents, so it never changes the world
+    model; it lets you look at encoded and predicted latents."""
+
+    def __init__(self, z_dim=192, img_size=224, base_ch=32, start=7):
+        super().__init__()
+        n_up = int(round(math.log2(img_size / start)))
+        assert start * 2 ** n_up == img_size, "img_size must be start * 2^k"
+        chans = [base_ch * 2 ** min(i, 4) for i in range(n_up, -1, -1)]  # e.g. 512 .. 32
+        self.start, self.c0 = start, chans[0]
+        self.fc = nn.Linear(z_dim, chans[0] * start * start)
+
+        def up(a, b):
+            return nn.Sequential(
+                nn.Upsample(scale_factor=2, mode="nearest"),
+                nn.Conv2d(a, b, 3, padding=1), nn.GroupNorm(8, b), nn.SiLU(),
+                nn.Conv2d(b, b, 3, padding=1), nn.GroupNorm(8, b), nn.SiLU(),
+            )
+
+        self.net = nn.Sequential(*[up(a, b) for a, b in zip(chans[:-1], chans[1:])],
+                                 nn.Conv2d(chans[-1], 3, 3, padding=1))
+
+    def forward(self, z):
+        """z: (N, D) -> (N, 3, H, W)"""
+        return self.net(self.fc(z).view(-1, self.c0, self.start, self.start))
