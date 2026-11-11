@@ -75,9 +75,42 @@ which shrinks the action effect, while planning needs p(z' | commanded), execute
 They are the wrong conditional for planning; a proper test needs rollouts logged with commanded
 actions and noisy execution.
 
-**Variant A follow-up (in progress).** The first A runs trained the whole transformer at the
-pretrained learning rate (3e-5). With `--trunk-lr 3e-4 --ctx-frac 0.5` (`ar_lr.pt`) the
-16-sample mean improves to .014 / .13 / .35 / .68 (k=1/5/10/20), still about 4x B at k=1.
-Context signal 0.97 vs 0.9 makes no difference, and one-step mean mode equals the ensemble at
-k=1, so the error is in the network, not the sampler. Next: `--ctx-frac 0.9` (more training
-in the inference regime), training from scratch, and Dreamer 4's ramp loss weight.
+**Variant A follow-up.** The first A runs trained the whole transformer at the pretrained
+learning rate (3e-5). 16-sample mean, clean Push-T, 10k steps each:
+
+| run | k=1 | k=5 | k=10 | k=20 |
+|---|---|---|---|---|
+| `ar_ctx` lr 3e-5, `--ctx-frac 0.5` | .033 | .29 | .70 | 1.01 |
+| `ar_lr` `--trunk-lr 3e-4 --ctx-frac 0.5` | .014 | .13 | .35 | .68 |
+| `ar_lr_c97` + `--ctx-tau 0.97` | .014 | .14 | .37 | .72 |
+| `ar_lr_w` + `--tau-weight` (Dreamer 4 ramp) | .013 | .13 | .34 | .65 |
+| `ar_f09` `--ctx-frac 0.9` | .010 | .10 | .31 | .63 |
+| `ar_f09_scratch` + `--init none` | **.0089** | **.096** | **.29** | **.60** |
+| B / `mse.pt` (reference) | .0034 / .0040 | .033 / .035 | .13 / .13 | .33 / .35 |
+
+The context signal level doesn't matter, and one-step mean mode equals the ensemble, so the error
+is in the network. Training more windows in the inference regime helps most, and the released
+weights don't help A (they were trained for a different output). A still gets one target per
+window vs B's 3 tokens x 4 taus. Next: dense clean-context training (clean context tokens plus
+noisy target tokens in one sequence, with an attention mask so every frame is a target with
+clean history).
+
+## End-to-end (encoder + flow B from scratch, with decoder), 2026-11-11
+
+    python train.py model=lewm_flow data.dataset.name=pusht_expert_train.h5 decoder.enabled=true \
+      loader.batch_size=32 num_workers=2 loader.prefetch_factor=2 loader.persistent_workers=false \
+      loss.sigreg.weight=0.3 trainer.max_epochs=20 +trainer.limit_train_batches=5000 \
+      +trainer.limit_val_batches=200 output_model_name=lewm_flow_e2e subdir=lewm_flow_e2e
+
+Settings sized for an 8 GB GPU / 7 GB RAM laptop. SIGReg 0.3 compensates batch 32: the statistic
+scales with batch size, so use ~0.09 at batch 128. The run stopped at epoch 14 (70k steps, about
+2.2M windows vs about 178M for the released model) when its session ended. Validation losses were
+still falling (flow .0071, MSE head .0101, decoder .0108, SIGReg 1.24; no collapse).
+
+- **Decoder** (`module.PixelDecoder`, 224x224, `decoder.frames=last`): trained on the same
+  batches from detached latents, with its own optimizer, gradient clipping and RNG stream.
+  Verified: with `+trainer.deterministic=true` the WM weights are bit-identical with and without
+  the decoder. Reconstructions are sharp; see `python -m flow_dynamics.visualize_e2e`.
+- **Planning** (`eval_plan.py --e2e lewm_flow_e2e/weights_epoch_14.pt`, same 50 tasks):
+  MSE head 72%, 1 flow sample 52%, mean mode 34% (released LeWM 92%). The model is undertrained;
+  the flow-vs-MSE ordering matches stage 1.

@@ -64,6 +64,9 @@ def main():
     p.add_argument("--sample-steps", type=int, default=None)
     p.add_argument("--plan-noise", type=int, default=None)
     p.add_argument("--risk-weight", type=float, default=None)
+    p.add_argument("--e2e", default=None,
+                   help="end-to-end checkpoint saved by train.py (e.g. <run name>/weights_epoch_10.pt under the swm "
+                        "checkpoint dir); replaces --model")
     p.add_argument("--mse-head", action="store_true", help="flow checkpoint, but plan with its MSE head")
     p.add_argument("--exec-noise", type=float, default=0.0, help="action noise executed in the env (normalised units)")
     p.add_argument("--cem-samples", type=int, default=300)
@@ -89,7 +92,13 @@ def main():
                                   risk_weight=a.risk_weight).items() if v is not None}
     if a.mse_head:
         kw["flow_variant"] = "none"
-    model = full_model(a.model, a.task, **kw)
+    if a.e2e:
+        model = swm.wm.utils.load_pretrained(a.e2e).cuda().eval().requires_grad_(False)
+        for k, v in kw.items():
+            setattr(model, k, v)
+        a.model = a.e2e
+    else:
+        model = full_model(a.model, a.task, **kw)
     solver = CEMSolver(model=model, batch_size=1, num_samples=a.cem_samples, var_scale=1.0,
                        n_steps=30, topk=30, device="cuda", seed=a.seed)
     calls = {"n": 0, "t": 0.0}
