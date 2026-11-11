@@ -53,3 +53,17 @@ flow:
   head: {width: 512, depth: 4}
   sample: {steps: 10, power: 2.0, ctx_tau: 0.9}   # power>1 = denser steps near tau=1
   plan: {num_noise: 1, risk_weight: 0.0, seed: 0}
+
+# Visualisation decoder trained on detached latents (own optimizer and RNG: the WM is unchanged).
+decoder:
+  enabled: false
+  frames: last           # last | all: which frames of each window to reconstruct (all needs > 8 GB at batch 32)
+  net:
+    _target_: module.PixelDecoder
+    z_dim: ${embed_dim}
+    img_size: ${img_size}
+    base_ch: 32
+  optimizer:
+    type: AdamW
+    lr: 3e-4
+    weight_decay: 0.0

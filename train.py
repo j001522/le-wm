@@ -56,12 +56,24 @@ def lejepa_forward(self, batch, stage, cfg):
         output["loss"] = (output["flow_loss"] + fc.mse_weight * output["pred_loss"]
                           + lambd * output["sigreg_loss"])
 
+    if getattr(self, "decoder", None) is not None:
+        # visualisation decoder: detached latents -> encoder-space pixels; no gradient reaches the WM
+        frames = cfg.decoder.frames
+        z, px = output["emb"].detach(), output["pixels"]
+        if frames == "last":
+            z, px = z[:, -1:], px[:, -1:]
+        rec = self.decoder(z.flatten(0, 1))
+        output["dec_loss"] = (rec.float() - px.flatten(0, 1).float()).pow(2).mean()
+        output["loss"] = output["loss"] + output["dec_loss"]
+
     losses_dict = {f"{stage}/{k}": v.detach() for k, v in output.items() if "loss" in k}
     self.log_dict(losses_dict, on_step=True, sync_dist=True)
     return output
 
 @hydra.main(version_base=None, config_path="./config/train", config_name="lewm")
 def run(cfg):
+    # seed init, SIGReg projections and dropout, so runs (e.g. with vs without decoder) are comparable
+    pl.seed_everything(cfg.seed, workers=True)
     #########################
     ##       dataset       ##
     #########################
@@ -109,12 +121,27 @@ def run(cfg):
         },
     }
 
+    extra = {}
+    if cfg.get("decoder", {}).get("enabled", False):
+        # own RNG stream, so adding the decoder leaves the WM's initialisation unchanged
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(cfg.seed + 1)
+            extra["decoder"] = hydra.utils.instantiate(cfg.decoder.net)
+        # own optimizer: gradient clipping and steps are per optimizer, so the WM's are untouched
+        optimizers["decoder_opt"] = {
+            "modules": "decoder",
+            "optimizer": dict(cfg.decoder.optimizer),
+            "scheduler": {"type": "LinearWarmupCosineAnnealingLR"},
+            "interval": "epoch",
+        }
+
     data_module = spt.data.DataModule(train=train, val=val)
     world_model = spt.Module(
         model = world_model,
         sigreg = SIGReg(**cfg.loss.sigreg.kwargs),
         forward=partial(lejepa_forward, cfg=cfg),
         optim=optimizers,
+        **extra,
     )
 
     ##########################
@@ -135,6 +162,7 @@ def run(cfg):
 
     object_dump_callback = SaveCkptCallback(
         run_name=cfg.output_model_name, cfg=cfg.model, epoch_interval=1,
+        extra_dir=run_dir, decoder_cfg=cfg.decoder.net if "decoder" in extra else None,
     )
 
     trainer = pl.Trainer(
