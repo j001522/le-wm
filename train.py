@@ -7,11 +7,50 @@ import lightning as pl
 import stable_pretraining as spt
 import stable_worldmodel as swm
 import torch
-from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 from omegaconf import OmegaConf, open_dict
 
 from module import SIGReg
 from utils import get_column_normalizer, get_img_preprocessor, SaveCkptCallback
+
+
+class ResumeCkpt(pl.Callback):
+    """Full trainer state to a fixed path every n steps and at each epoch end (atomic replace)."""
+
+    def __init__(self, path, every_n_steps):
+        self.path, self.n = Path(path), every_n_steps
+
+    def _save(self, trainer):
+        tmp = self.path.with_suffix(".tmp")
+        trainer.save_checkpoint(tmp)
+        if trainer.is_global_zero:
+            os.replace(tmp, self.path)
+
+    def on_train_batch_end(self, trainer, *args):
+        if self.n and trainer.global_step % self.n == 0:
+            self._save(trainer)
+
+    def on_train_epoch_end(self, trainer, *args):
+        self._save(trainer)
+
+
+class LinkSptRun(pl.Callback):
+    """Symlink the spt RegistryLogger run dir (metrics.csv) into <run_dir>/spt_runs/<job>_<run_id>."""
+
+    def __init__(self, run_dir):
+        self.dir = Path(run_dir) / "spt_runs"
+
+    def on_fit_start(self, trainer, *args):
+        if not trainer.is_global_zero:
+            return
+        for lg in trainer.loggers:
+            src = getattr(lg, "run_dir", None)
+            if type(lg).__name__ == "RegistryLogger" and src:
+                self.dir.mkdir(exist_ok=True)
+                dst = self.dir / f"job{os.environ.get('SLURM_JOB_ID', 'local')}_{getattr(lg, 'run_id', '')}"
+                if not dst.exists():
+                    dst.symlink_to(Path(src).resolve())
 
 
 def lejepa_forward(self, batch, stage, cfg):
@@ -47,6 +86,7 @@ def lejepa_forward(self, batch, stage, cfg):
             emb, act_emb, ctx_len, n_preds, detach_target=fc.detach_target,
             taus_per_token=fc.taus_per_token, tau_mean=fc.tau_logit_normal.mean,
             tau_std=fc.tau_logit_normal.std, tau_weight=fc.get("tau_weight", False), ctx_frac=fc.get("ctx_frac", 0.0),
+            detach_head=fc.get("detach_head", False),
         )
         output["flow_loss"] = fl["flow_loss"]
         mse_pred = fl["mse_pred"]
@@ -151,34 +191,49 @@ def run(cfg):
     run_id = cfg.get("subdir") or ""
     run_dir = Path(swm.data.utils.get_cache_dir(sub_folder='checkpoints'), run_id)
 
-    logger = None
+    # metrics: <run_dir>/tb (TensorBoard, appended across resumes). spt.Manager drops any CSVLogger
+    # and adds its own RegistryLogger (metrics.csv in a timestamped spt run dir); LinkSptRun links
+    # that dir into <run_dir>/spt_runs/ so every job's CSV is findable next to the checkpoints.
+    logger = []
+    try:
+        logger.append(TensorBoardLogger(save_dir=run_dir, name="tb", version="", default_hp_metric=False))
+    except ModuleNotFoundError as e:
+        print(f"TensorBoard logging disabled: {e}")
     if cfg.wandb.enabled:
-        logger = WandbLogger(**cfg.wandb.config)
-        logger.log_hyperparams(OmegaConf.to_container(cfg))
+        logger.append(WandbLogger(**cfg.wandb.config))
+    for lg in logger:
+        lg.log_hyperparams(OmegaConf.to_container(cfg))
 
     run_dir.mkdir(parents=True, exist_ok=True)
     with open(run_dir / "config.yaml", "w") as f:
         OmegaConf.save(cfg, f)
 
     object_dump_callback = SaveCkptCallback(
-        run_name=cfg.output_model_name, cfg=cfg.model, epoch_interval=1,
+        run_name=cfg.output_model_name, cfg=cfg.model, epoch_interval=cfg.ckpt_epoch_interval,
         extra_dir=run_dir, decoder_cfg=cfg.decoder.net if "decoder" in extra else None,
     )
 
+    # full-state checkpoint (optimizer, scheduler, RNG) in run_dir, for resuming across jobs
+    # (a plain Callback, not ModelCheckpoint: spt.Manager redirects every ModelCheckpoint to its own
+    # timestamped cache dir, where a resubmitted job would never find it)
+    resume_ckpt = ResumeCkpt(run_dir / "last.ckpt", cfg.ckpt_every_n_steps)
     trainer = pl.Trainer(
         **cfg.trainer,
-        callbacks=[object_dump_callback],
+        callbacks=[object_dump_callback, resume_ckpt, LinkSptRun(run_dir)],
         num_sanity_val_steps=1,
-        logger=logger,
+        logger=logger or None,
         enable_checkpointing=True,
     )
 
-    ckpt_path = run_dir / f"{cfg.output_model_name}_weights.ckpt"
+    ckpt_path = run_dir / "last.ckpt"
+    if ckpt_path.exists():
+        print(f"resuming full state from {ckpt_path}")
     manager = spt.Manager(
         trainer=trainer,
         module=world_model,
         data=data_module,
         ckpt_path=ckpt_path if ckpt_path.exists() else None,
+        weights_only=False,
     )
 
     manager()

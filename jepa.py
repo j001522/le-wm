@@ -251,7 +251,8 @@ class JEPA(nn.Module):
         return emb, drift
 
     def flow_loss(self, emb, act_emb, ctx_len, n_preds, detach_target=True,
-                  taus_per_token=4, tau_mean=0.0, tau_std=1.0, tau_weight=False, ctx_frac=0.0):
+                  taus_per_token=4, tau_mean=0.0, tau_std=1.0, tau_weight=False, ctx_frac=0.0,
+                  detach_head=False):
         """Flow-matching (x-prediction) loss on encoded windows.
         emb, act_emb: (B, T, D). ctx_frac (variant A): fraction of windows whose history uses
         tau = ctx_tau, as at inference. Returns flow_loss, the MSE prediction (or None) and tau/err for logging."""
@@ -264,7 +265,8 @@ class JEPA(nn.Module):
             z1 = tgt.detach() if detach_target else tgt
             h = self.predictor(ctx_emb, ctx_act)  # trunk, before pred_proj
             K = taus_per_token
-            h_k, z_k = (t.unsqueeze(2).expand(-1, -1, K, -1) for t in (h, z1))
+            h_f = h.detach() if detach_head else h
+            h_k, z_k = (t.unsqueeze(2).expand(-1, -1, K, -1) for t in (h_f, z1))
             tau = sample_tau(h_k.shape[:-1])  # (B, T, K)
             x_tau = (1 - tau[..., None]) * torch.randn_like(z_k) + tau[..., None] * z_k
             err = (self.flow_head(x_tau, tau, h_k) - z_k).pow(2).mean(-1)

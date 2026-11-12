@@ -7,6 +7,7 @@ action is the row-major flattening of the FRAMESKIP raw actions (as in swm datas
 """
 
 import json
+import os
 from pathlib import Path
 
 import h5py
@@ -16,7 +17,7 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "flow_dynamics" / "save"
-SWM = Path.home() / ".stable_worldmodel"
+SWM = Path(os.environ.get("STABLEWM_HOME", Path.home() / ".stable_worldmodel"))
 FRAMESKIP = 5
 TASKS = {
     "pusht": dict(ckpt="quentinll/lewm-pusht", dataset="pusht_expert_train",

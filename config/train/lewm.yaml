@@ -35,6 +35,9 @@ optimizer:
 
 num_preds: 1
 
+ckpt_every_n_steps: 2000   # full-state last.ckpt (resume)
+ckpt_epoch_interval: 1     # weights_epoch_N.pt / decoder_epoch_N.pt every N epochs (and the last)
+
 loss:
   sigreg:
     weight: 0.09
@@ -45,6 +48,7 @@ loss:
 # Flow-matching dynamics. Only used with model=lewm_flow or model=lewm_flow_ar.
 flow:
   detach_target: true
+  detach_head: false       # head variant: true = flow head on detached trunk output (no flow grad to the WM)
   mse_weight: 1.0          # 0 = pure flow
   taus_per_token: 4        # head variant: tau samples per context token
   tau_weight: false        # true: weight x-loss by 0.1 + 0.9*tau
