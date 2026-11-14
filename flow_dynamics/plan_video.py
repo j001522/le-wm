@@ -5,9 +5,11 @@ python -m flow_dynamics.plan_video --run pusht_LeWM-D --epoch 10 --num-eval 50 -
 
 Same task sampling, CEM settings and success metric as eval_plan.py. At every replan the chosen
 plan (CEM mean) is rolled out by the world model (one noise sample for flow variants) and every
-predicted latent is decoded with the run's detached decoder. The right panel shows the imagined
-frame for the nearest action-block boundary of the current plan (block = FRAMESKIP env steps), so
-left and right agree in time to within 2 env steps. Success is measured on all --num-eval episodes; videos are written for the first --num-videos:
+predicted latent is decoded with the run's detached decoder. The model predicts once per action
+block (FRAMESKIP env steps), so the video has one frame per block boundary: the observation after k
+blocks of the current plan next to the model's prediction for that same moment (k = 0 is the encoded
+and decoded current observation). At a replan, the old plan's last prediction is shown against the
+state it led to, then the new plan starts at k = 0. Success is measured on all --num-eval episodes; videos are written for the first --num-videos:
 <out>/<run>/ep<k>_<success|fail>.mp4, a tiled overview.mp4, and results.json.
 """
 
@@ -123,19 +125,27 @@ class RecordingPolicy(swm.policy.WorldModelPolicy):
             action = super().get_action(info_dict, **kwargs)
         finally:
             self.solver = solver
+        px, goal = info_dict.get("pixels"), info_dict.get("goal")
+        if goal is not None:
+            for i in range(n):
+                self.goal[i] = to_uint8(goal[i])
         if self._pending is not None:
             rows = [i for i in range(n) if replan[i]]
             for row, i in enumerate(rows):
+                # the plan being replaced: its last prediction vs the state it led to
+                k = self.since_plan[i] // FRAMESKIP
+                if self.imag[i] is not None and self.since_plan[i] % FRAMESKIP == 0 and k < len(self.imag[i]):
+                    self.frames[i].append((to_uint8(px[i]), self.imag[i][k], self.goal[i], k))
                 self.imag[i], self.since_plan[i] = self._pending[row], 0
-        px, goal = info_dict.get("pixels"), info_dict.get("goal")
         for i in range(n):
             if self.imag[i] is None or np.isnan(action[i]).all():
                 continue
-            sim = to_uint8(px[i])
-            if goal is not None:
-                self.goal[i] = to_uint8(goal[i])
-            k = min(int(round(self.since_plan[i] / FRAMESKIP)), len(self.imag[i]) - 1)
-            self.frames[i].append((sim, self.imag[i][k], self.goal[i], k))
+            # one video frame per action block: the observation after k blocks of the current plan
+            # next to the world model's prediction for that same moment
+            if self.since_plan[i] % FRAMESKIP == 0:
+                k = self.since_plan[i] // FRAMESKIP
+                if k < len(self.imag[i]):
+                    self.frames[i].append((to_uint8(px[i]), self.imag[i][k], self.goal[i], k))
             self.since_plan[i] += 1
         return action
 
@@ -187,7 +197,7 @@ def main():
     p.add_argument("--budget", type=int, default=50)
     p.add_argument("--cem-samples", type=int, default=300)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--fps", type=int, default=10)
+    p.add_argument("--fps", type=float, default=2)
     p.add_argument("--out", default=str(ARTIFACTS / "videos"))
     a = p.parse_args()
 
