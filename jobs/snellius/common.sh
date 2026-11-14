@@ -47,6 +47,7 @@ ds_args() {
 #   LeWM-D          LeWM + D
 #   LeWM-MSE-dFH-D  LeWM + MSE + detached flow head + D
 #   LeWM-FH-D       LeWM + flow head (no MSE; flow gradients reach the encoder) + D
+#   LeWM-MSE-FH-D   LeWM + MSE + flow head, both training the encoder (flow target not detached, as in LeWM-FH-D) + D
 #   LeFWM-D         flow inside the transformer + D
 # (O, B, B2, A are the old short names)
 variant_args() {
@@ -55,6 +56,7 @@ variant_args() {
     O|LeWM-D)          echo "$common model=lewm" ;;
     B|LeWM-MSE-dFH-D)  echo "$common model=lewm_flow flow.mse_weight=1.0 flow.detach_head=true" ;;
     B2|LeWM-FH-D)      echo "$common model=lewm_flow flow.mse_weight=0.0 flow.detach_head=false flow.detach_target=false" ;;
+    LeWM-MSE-FH-D)     echo "$common model=lewm_flow flow.mse_weight=1.0 flow.detach_head=false flow.detach_target=false" ;;
     A|LeFWM-D)         echo "$common model=lewm_flow_ar flow.detach_target=false flow.ctx_frac=0.9" ;;
   esac
 }

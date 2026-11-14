@@ -2,7 +2,7 @@
 # One variant on one GPU, paper recipe (10 epochs).
 #   usage:   [DS=pusht|cube] sbatch -p <partition> -J <ds>_<variant> train1.sbatch <variant> [hydra overrides...]
 #   example: for p in gpu_h100 gpu_a100; do sbatch -p $p -J pusht_LeWM-D train1.sbatch LeWM-D; done
-#   variants: LeWM-D  LeWM-MSE-dFH-D  LeWM-FH-D  LeFWM-D   (see common.sh)
+#   variants: LeWM-D  LeWM-MSE-dFH-D  LeWM-FH-D  LeWM-MSE-FH-D  LeFWM-D   (see common.sh)
 # Submit to a100 and h100 under the same job name: the first to start cancels its pending twin.
 # Resubmittable: train.py resumes from $STABLEWM_HOME/checkpoints/<ds>_<variant>/last.ckpt.
 #SBATCH --gpus=1 -c 16 -t 1-00:00:00
