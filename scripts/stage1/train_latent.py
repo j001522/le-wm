@@ -1,6 +1,6 @@
 """Stage 1: train the dynamics on cached frozen-encoder latents.
 
-python -m flow_dynamics.train_latent --variant head --steps 20000 --out head.pt
+python -m scripts.stage1.train_latent --variant head --steps 20000 --out head.pt
 variant none = MSE predictor (fine-tuned control), head = B, transformer = A.
 """
 
@@ -11,7 +11,9 @@ import time
 import numpy as np
 import torch
 
-from flow_dynamics.common import ARTIFACTS, LatentWindows, build_dynamics, save_model
+from helpers.constants import STAGE1
+from helpers.latents import LatentWindows
+from helpers.models import build_dynamics, save_model
 
 HS = 3  # history size = context tokens
 
@@ -95,7 +97,7 @@ def main():
     base = [g["lr"] for g in opt.param_groups]
     warm = min(1000, a.steps // 10)
     flow_kw = dict(taus_per_token=a.taus_per_token, tau_std=a.tau_std, tau_weight=a.tau_weight, ctx_frac=a.ctx_frac)
-    out = ARTIFACTS / a.out
+    out = STAGE1 / a.out
     meta = {**vars(a), "history_size": HS}
     print(f"{a.variant}: {sum(v.numel() for v in groups['new'])/1e6:.2f}M new, "
           f"{sum(v.numel() for v in groups['old'])/1e6:.2f}M pretrained trainable params", flush=True)

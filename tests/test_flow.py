@@ -1,4 +1,4 @@
-"""Run: python -m flow_dynamics.tests.test_flow (from the repo root)."""
+"""Run: python -m tests.test_flow (from the repo root)."""
 
 import importlib.util
 import subprocess
@@ -9,7 +9,7 @@ import torch
 from torch import nn
 
 import jepa
-from flow_dynamics.common import build_dynamics
+from helpers.models import build_dynamics
 
 D = 8
 

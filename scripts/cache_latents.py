@@ -1,8 +1,11 @@
-"""Encode every dataset frame once with the frozen released LeWM encoder.
+"""Encode every dataset frame once, with the released LeWM encoder or an end-to-end checkpoint.
 
-python -m flow_dynamics.cache_latents --task pusht   (about 40 min for PushT)
+python -m scripts.cache_latents --task pusht                              (released encoder)
+python -m scripts.cache_latents --task pusht --run lewm_flow_e2e --epoch 14 (any trained run)
+About 40 min for PushT on an RTX 4060 laptop.
 
-Output h5 at <swm cache>/datasets/<latents name>, rows = global frame indices:
+Output h5 at <swm cache>/datasets/<latents name> (released) or
+<dataset>_latents_<run>_e<epoch>.h5 (trained run), rows = global frame indices:
     z (N, 192) f2, action (N, A) f4, episode_idx (N,), ep_len (E,), ep_offset (E,)
 """
 
@@ -15,7 +18,11 @@ import numpy as np
 import stable_pretraining as spt
 import torch
 
-from flow_dynamics.common import SWM, TASKS, full_model
+import stable_worldmodel as swm
+
+from helpers.constants import SWM, TASKS
+from helpers.latents import latents_path
+from helpers.models import full_model
 
 
 @torch.no_grad()
@@ -29,12 +36,19 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--task", default="pusht", choices=sorted(TASKS))
     p.add_argument("--batch-size", type=int, default=512)
+    p.add_argument("--run", default=None, help="checkpoint run name under <swm cache>/checkpoints (default: released)")
+    p.add_argument("--epoch", type=int, default=None)
     a = p.parse_args()
 
     task = TASKS[a.task]
     src_path = SWM / "datasets" / f"{task['dataset']}.h5"
-    out = SWM / "datasets" / task["latents"]
-    model = full_model("pretrained", a.task)
+    if a.run is None:
+        out = SWM / "datasets" / task["latents"]
+        model = full_model("pretrained", a.task)
+    else:
+        assert a.epoch is not None, "--epoch is required with --run"
+        out = latents_path(task["dataset"], a.run, a.epoch)
+        model = swm.wm.utils.load_pretrained(f"{a.run}/weights_epoch_{a.epoch}.pt").cuda().eval().requires_grad_(False)
     stats = spt.data.dataset_stats.ImageNet
     mean = torch.tensor(stats["mean"]).cuda()[None, :, None, None]
     std = torch.tensor(stats["std"]).cuda()[None, :, None, None]
@@ -52,6 +66,7 @@ def main():
             ).astype(np.float16)
             if i % (a.batch_size * 200) == 0:
                 print(f"{i}/{n} ({time.time() - t0:.0f}s)", flush=True)
+        dst.attrs["encoder"] = "released" if a.run is None else f"{a.run}/weights_epoch_{a.epoch}.pt"
     print(f"wrote {out}")
 
 

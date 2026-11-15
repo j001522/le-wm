@@ -1,4 +1,4 @@
-# LeWM + flow-matching dynamics
+# Experiments: LeWM + flow-matching dynamics
 
 Keep LeWM's autoregressive latent rollout, but **sample** each next latent with a flow
 (x-prediction, linear path `x_t = (1-t) eps + t z`) instead of regressing its mean.
@@ -11,23 +11,32 @@ Keep LeWM's autoregressive latent rollout, but **sample** each next latent with 
   behaviour equals the original (tested).
 - `train.py` + `config/train/model/lewm_flow.yaml` (B) / `lewm_flow_ar.yaml` (A): end-to-end
   training (stages 2-3), e.g. `python train.py model=lewm_flow loader.batch_size=32`.
-- `flow_dynamics/`: stage 1 (frozen encoder, cached latents)
-  - `common.py`: `LatentWindows` (all 2.3M PushT latents on the GPU, 5% of episodes held out),
-    `build_dynamics` (init from the released predictor), `full_model` (encoder + any dynamics)
-  - `train_latent.py`: train variant none/head/transformer; `--action-noise` makes the
-    next latent stochastic given the actions the model sees
-  - `eval_rollout.py`: k-step rollout error, ensemble spread, drift-vs-spread rank correlation,
-    calibration, SIGReg statistic of samples, model cost of one CEM iteration
+- `helpers/`: shared code for the scripts
+  - `constants.py`: paths (`SWM` = `$STABLEWM_HOME`, `RESULTS`, `STAGE1`), `TASKS`, `run_dir`
+  - `models.py`: `load_run` (trained run + decoder), `build_dynamics` (init from the released
+    predictor), `full_model` (released encoder + any stage-1 dynamics)
+  - `latents.py`: `LatentWindows` (all 2.3M PushT latents on the GPU, 5% of episodes held out)
+  - `planning.py`: tasks, scalers, transform and CEM as in the root `eval.py`
+  - `video.py`: encode frames, decode latents, overlays, mp4/gif
+- `scripts/` (`python -m scripts.<name>`)
   - `eval_plan.py`: CEM success in the simulator on the root `eval.py` tasks; `--run <run> --epoch N`
     for trained runs, `--num-videos N` for videos (simulation | decoded imagination of the plan)
-  - `tests/test_flow.py`: `python -m flow_dynamics.tests.test_flow`
-  - `save/`: checkpoints, logs, eval json
+  - `visualize_e2e.py`: decoded real / reconstructed / rolled-out frames of a trained run
+  - `cache_latents.py`: encode every dataset frame (released encoder or `--run/--epoch`)
+  - `stage1/`: frozen encoder, cached latents
+    - `train_latent.py`: train variant none/head/transformer; `--action-noise` makes the
+      next latent stochastic given the actions the model sees
+    - `eval_rollout.py`: k-step rollout error, ensemble spread, drift-vs-spread rank correlation,
+      calibration, SIGReg statistic of samples, model cost of one CEM iteration
+- `tests/test_flow.py`: `python -m tests.test_flow`
+- Outputs: `results/<experiment>/[<run>_e<epoch>/]` (gitignored); stage-1 checkpoints in
+  `$STABLEWM_HOME/checkpoints/stage1/`; old stage-1 logs and sweep scripts in `results/stage1/logs/`.
 
 ## Stage-1 recipe
-    python -m flow_dynamics.train_latent --variant head --steps 20000 --out head.pt
-    python -m flow_dynamics.train_latent --variant none --steps 20000 --out mse.pt
-    python -m flow_dynamics.eval_rollout --models pretrained mse.pt head.pt
-    python -m flow_dynamics.eval_plan --model head.pt
+    python -m scripts.stage1.train_latent --variant head --steps 20000 --out head.pt
+    python -m scripts.stage1.train_latent --variant none --steps 20000 --out mse.pt
+    python -m scripts.stage1.eval_rollout --models pretrained mse.pt head.pt
+    python -m scripts.eval_plan --model head.pt
 
 ## Stage-1 results (Push-T, 2026-11-10)
 All dynamics start from the released predictor and train on cached latents
@@ -111,7 +120,7 @@ still falling (flow .0071, MSE head .0101, decoder .0108, SIGReg 1.24; no collap
 - **Decoder** (`module.PixelDecoder`, 224x224, `decoder.frames=last`): trained on the same
   batches from detached latents, with its own optimizer, gradient clipping and RNG stream.
   Verified: with `+trainer.deterministic=true` the WM weights are bit-identical with and without
-  the decoder. Reconstructions are sharp; see `python -m flow_dynamics.visualize_e2e`.
+  the decoder. Reconstructions are sharp; see `python -m scripts.visualize_e2e`.
 - **Planning** (`eval_plan.py --run lewm_flow_e2e --epoch 14`, same 50 tasks):
   MSE head 72%, 1 flow sample 52%, mean mode 34% (released LeWM 92%). The model is undertrained;
   the flow-vs-MSE ordering matches stage 1.

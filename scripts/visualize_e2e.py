@@ -1,10 +1,10 @@
 """Decode real and predicted latents of an end-to-end model with its decoder.
 
-python -m flow_dynamics.visualize_e2e --run lewm_flow_e2e --epoch 14 --episodes 3
+python -m scripts.visualize_e2e --run lewm_flow_e2e --epoch 14 --episodes 3
 
 For each episode, one figure with rows: real frames, reconstruction of their latents,
 flow rollout (one sample), MSE-head rollout. The rollout starts from 3 real frames and
-uses the real actions. Images go to flow_dynamics/save/viz/.
+uses the real actions. Images go to results/visualize_e2e/<run>_e<epoch>/.
 """
 
 import argparse
@@ -17,11 +17,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import stable_pretraining as spt
-import stable_worldmodel as swm
 import torch
 
-import module
-from flow_dynamics.common import ARTIFACTS, FRAMESKIP, SWM
+from helpers.constants import FRAMESKIP, SWM, run_dir
+from helpers.models import load_run
 
 HS = 3
 
@@ -36,19 +35,13 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
-    ck = SWM / "checkpoints" / a.run
-    model = swm.wm.utils.load_pretrained(f"{a.run}/weights_epoch_{a.epoch}.pt").cuda().eval().requires_grad_(False)
-    dck = torch.load(ck / f"decoder_epoch_{a.epoch}.pt", map_location="cpu")
-    cfg = {k: v for k, v in dck["cfg"].items() if k != "_target_"}
-    decoder = module.PixelDecoder(**cfg).cuda().eval()
-    decoder.load_state_dict(dck["state_dict"])
+    model, decoder = load_run(a.run, a.epoch)
 
     stats = spt.data.dataset_stats.ImageNet
     mean = torch.tensor(stats["mean"]).cuda()[:, None, None]
     std = torch.tensor(stats["std"]).cuda()[:, None, None]
     T = HS + a.steps
-    out_dir = ARTIFACTS / "viz"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = run_dir("visualize_e2e", a.run, a.epoch)
 
     with h5py.File(SWM / "datasets" / f"{a.dataset}.h5", "r") as f:
         act_all = f["action"]
@@ -94,7 +87,7 @@ def main():
                         ax.set_xlabel(f"mse {rows[name + ' err'][t - HS]:.3f}", fontsize=6)
             fig.suptitle(f"{a.run} epoch {a.epoch}, episode {ep}, frames {idx[0]}..{idx[-1]}", fontsize=9)
             fig.tight_layout()
-            path = out_dir / f"{a.run}_e{a.epoch}_ep{ep}.png"
+            path = out_dir / f"ep{ep}.png"
             fig.savefig(path, dpi=110)
             plt.close(fig)
             print("wrote", path)

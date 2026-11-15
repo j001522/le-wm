@@ -10,7 +10,7 @@ cd $B/le-wm
 nvidia-smi -L
 for run in "$@"; do
   t=$(date +%s)
-  python -m flow_dynamics.eval_plan --run $run --num-eval ${EVAL:-10} --num-videos ${VIDEOS:-10} \
-    --out ${OUT:-$B/eval_videos/blocks} --log plan_videos.jsonl > $B/logs/plan_video_${SLURM_JOB_ID}_$run.log 2>&1
+  python -m scripts.eval_plan --run $run --num-eval ${EVAL:-10} --num-videos ${VIDEOS:-10} \
+    ${OUT:+--out $OUT/$run} --log plan_videos.jsonl > $B/logs/plan_video_${SLURM_JOB_ID}_$run.log 2>&1
   echo "$run exit $? in $(( $(date +%s)-t ))s: $(grep -oE '"success_rate": [0-9.]+' $B/logs/plan_video_${SLURM_JOB_ID}_$run.log)"
 done

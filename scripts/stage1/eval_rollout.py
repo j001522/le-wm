@@ -1,7 +1,7 @@
 """Stage 1 evaluation on held-out episodes: k-step latent rollout error, uncertainty
 proxy vs ensemble spread, sample statistics, and rollout cost.
 
-python -m flow_dynamics.eval_rollout --models pretrained mse.pt head.pt
+python -m scripts.stage1.eval_rollout --models pretrained mse.pt head.pt
 'pretrained' is the released LeWM predictor. Each flow model is scored as:
   sample  one Euler sample (sample_steps), common noise
   mean    one step from tau=0 = x̂(tau=0), the conditional-mean predictor
@@ -16,7 +16,9 @@ import numpy as np
 import torch
 from scipy.stats import spearmanr
 
-from flow_dynamics.common import ARTIFACTS, LatentWindows, build_dynamics, load_model
+from helpers.constants import STAGE1, run_dir
+from helpers.latents import LatentWindows
+from helpers.models import build_dynamics, load_model
 from module import SIGReg
 
 HS = 3
@@ -118,7 +120,7 @@ def main():
     results = {"real_sigreg": real}
     for name in a.models:
         model = (build_dynamics("none", a.task).cuda().eval() if name == "pretrained"
-                 else load_model(ARTIFACTS / name)[0])
+                 else load_model(STAGE1 / name)[0])
         if a.sample_steps:
             model.sample_steps = a.sample_steps
         res, one = evaluate(model, z, act, a.ens)
@@ -129,8 +131,9 @@ def main():
         print(f"\n== {name}")
         for k, v in res.items():
             print(f"  {k:22s} " + (", ".join(f"{kk}: {vv:.4f}" for kk, vv in v.items()) if isinstance(v, dict) else f"{v:.4f}"))
-    (ARTIFACTS / a.out).write_text(json.dumps(results, indent=1))
-    print("wrote", ARTIFACTS / a.out)
+    out = run_dir("stage1") / a.out
+    out.write_text(json.dumps(results, indent=1))
+    print("wrote", out)
 
 
 if __name__ == "__main__":
