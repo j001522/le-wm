@@ -18,7 +18,8 @@ Keep LeWM's autoregressive latent rollout, but **sample** each next latent with 
     next latent stochastic given the actions the model sees
   - `eval_rollout.py`: k-step rollout error, ensemble spread, drift-vs-spread rank correlation,
     calibration, SIGReg statistic of samples, model cost of one CEM iteration
-  - `eval_plan.py`: CEM success in the simulator on the root `eval.py` tasks
+  - `eval_plan.py`: CEM success in the simulator on the root `eval.py` tasks; `--run <run> --epoch N`
+    for trained runs, `--num-videos N` for videos (simulation | decoded imagination of the plan)
   - `tests/test_flow.py`: `python -m flow_dynamics.tests.test_flow`
   - `save/`: checkpoints, logs, eval json
 
@@ -111,6 +112,6 @@ still falling (flow .0071, MSE head .0101, decoder .0108, SIGReg 1.24; no collap
   batches from detached latents, with its own optimizer, gradient clipping and RNG stream.
   Verified: with `+trainer.deterministic=true` the WM weights are bit-identical with and without
   the decoder. Reconstructions are sharp; see `python -m flow_dynamics.visualize_e2e`.
-- **Planning** (`eval_plan.py --e2e lewm_flow_e2e/weights_epoch_14.pt`, same 50 tasks):
+- **Planning** (`eval_plan.py --run lewm_flow_e2e --epoch 14`, same 50 tasks):
   MSE head 72%, 1 flow sample 52%, mean mode 34% (released LeWM 92%). The model is undertrained;
   the flow-vs-MSE ordering matches stage 1.
