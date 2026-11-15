@@ -1,17 +1,15 @@
 """Planning success with CEM in the simulator, on the root eval.py tasks (same seed -> same tasks),
 optionally with videos of the plans: simulation | the world model's decoded imagination.
 
-    python -m scripts.eval_plan --model head.pt                              (stage 1, released encoder)
-    python -m scripts.eval_plan --run pusht_LeWM-D --epoch 10                (trained run)
+    python -m scripts.eval_plan --run pusht_LeWM-D --epoch 10
     python -m scripts.eval_plan --run pusht_LeWM-D --epoch 10 --num-videos 10
 
 Model: --run/--epoch loads <swm>/checkpoints/<run>/weights_epoch_<epoch>.pt (and its decoder for
-videos); otherwise --model is 'pretrained' or a stage-1 checkpoint in <swm>/checkpoints/stage1 with
-the released encoder. --sample-steps/--plan-noise/--risk-weight/--mse-head override flow attributes.
+videos). --sample-steps/--plan-noise/--risk-weight/--mse-head override flow attributes.
 
 Every run appends one json line to results/plan/<--log>.
 
-Videos (--num-videos N > 0, runs with a decoder only): at every replan the chosen plan (CEM mean)
+Videos (--num-videos N > 0, needs the run's decoder): at every replan the chosen plan (CEM mean)
 is rolled out by the world model (one noise sample for flow variants) and every predicted latent is
 decoded. The model predicts once per action block (FRAMESKIP env steps), so the video has one frame
 per block boundary: the observation after k blocks of the current plan next to the model's
@@ -38,7 +36,7 @@ import stable_worldmodel as swm
 import torch
 
 from helpers.constants import FRAMESKIP, TASKS, run_dir
-from helpers.models import full_model, load_run
+from helpers.models import load_run
 from helpers.planning import cem_solver, fit_scalers, image_transform, load_planning_dataset, pick_tasks
 from helpers.video import decode, imagenet_norm, to_uint8, write_video
 
@@ -211,9 +209,8 @@ def write_videos(policy, episodes, starts, succ, n, fps, out):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--run", default=None, help="trained run under <swm>/checkpoints (overrides --model)")
+    p.add_argument("--run", required=True, help="trained run under <swm>/checkpoints")
     p.add_argument("--epoch", type=int, default=10)
-    p.add_argument("--model", default="pretrained", help="'pretrained' or a stage-1 checkpoint in <swm>/checkpoints/stage1")
     p.add_argument("--task", default="pusht", choices=[t for t in TASKS if "env" in TASKS[t]])
     p.add_argument("--dataset", default=None, help="name or path; default: the task's .lance if present, else .h5")
     p.add_argument("--num-eval", type=int, default=50)
@@ -237,15 +234,9 @@ def main():
     process = fit_scalers(dataset, task["cols"])
     tf = image_transform()
 
-    if a.run:
-        model, decoder = load_run(a.run, a.epoch, decoder=a.num_videos > 0)
-        name = f"{a.run}/e{a.epoch}"
-        if a.num_videos > 0 and decoder is None:
-            raise SystemExit(f"--num-videos needs a decoder, {a.run} has no decoder_epoch_{a.epoch}.pt")
-    else:
-        model, decoder, name = full_model(a.model, a.task), None, a.model
-        if a.num_videos > 0:
-            raise SystemExit("--num-videos needs a trained run with a decoder (--run)")
+    model, decoder = load_run(a.run, a.epoch, decoder=a.num_videos > 0)
+    if a.num_videos > 0 and decoder is None:
+        raise SystemExit(f"--num-videos needs a decoder, {a.run} has no decoder_epoch_{a.epoch}.pt")
     overrides = {k: v for k, v in dict(sample_steps=a.sample_steps, plan_noise=a.plan_noise,
                                        risk_weight=a.risk_weight).items() if v is not None}
     if a.mse_head:
@@ -275,7 +266,7 @@ def main():
     secs = time.time() - t0
     succ = np.asarray(m["episode_successes"]).astype(bool)
 
-    res = {**vars(a), "model": name,
+    res = {**vars(a),
            "success_rate": 100 * float(succ.mean()),  # percent, as eval.py
            "successes": succ.astype(int).tolist(),
            "seconds": round(secs, 1), "plans": len(policy.plan_times),

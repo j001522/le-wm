@@ -10,100 +10,22 @@ Keep LeWM's autoregressive latent rollout, but **sample** each next latent with 
   (`plan_eps`), `plan_noise`/`risk_weight` aggregation in `get_cost`. With no flow head,
   behaviour equals the original (tested).
 - `train.py` + `config/train/model/lewm_flow.yaml` (B) / `lewm_flow_ar.yaml` (A): end-to-end
-  training (stages 2-3), e.g. `python train.py model=lewm_flow loader.batch_size=32`.
+  training, e.g. `python train.py model=lewm_flow decoder.enabled=true`. The Push-T variants trained
+  on Snellius (LeWM-D, LeWM-MSE-dFH-D, LeWM-FH-D, LeWM-MSE-FH-D, LeFWM-D) and their settings are in
+  `jobs/snellius/common.sh`.
 - `helpers/`: shared code for the scripts
-  - `constants.py`: paths (`SWM` = `$STABLEWM_HOME`, `RESULTS`, `STAGE1`), `TASKS`, `run_dir`
-  - `models.py`: `load_run` (trained run + decoder), `build_dynamics` (init from the released
-    predictor), `full_model` (released encoder + any stage-1 dynamics)
-  - `latents.py`: `LatentWindows` (all 2.3M PushT latents on the GPU, 5% of episodes held out)
+  - `constants.py`: paths (`SWM` = `$STABLEWM_HOME`, `RESULTS`), `TASKS`, `run_dir`
+  - `models.py`: `load_run` (trained run + decoder)
+  - `latents.py`: latent-cache paths
   - `planning.py`: tasks, scalers, transform and CEM as in the root `eval.py`
   - `video.py`: encode frames, decode latents, overlays, mp4/gif
-- `scripts/` (`python -m scripts.<name>`)
-  - `eval_plan.py`: CEM success in the simulator on the root `eval.py` tasks; `--run <run> --epoch N`
-    for trained runs, `--num-videos N` for videos (simulation | decoded imagination of the plan)
-  - `visualize_e2e.py`: decoded real / reconstructed / rolled-out frames of a trained run
-  - `cache_latents.py`: encode every dataset frame (released encoder or `--run/--epoch`)
-  - `stage1/`: frozen encoder, cached latents
-    - `train_latent.py`: train variant none/head/transformer; `--action-noise` makes the
-      next latent stochastic given the actions the model sees
-    - `eval_rollout.py`: k-step rollout error, ensemble spread, drift-vs-spread rank correlation,
-      calibration, SIGReg statistic of samples, model cost of one CEM iteration
+- `scripts/` (`python -m scripts.<name> --run <run> --epoch N`)
+  - `eval_plan.py`: CEM success in the simulator on the root `eval.py` tasks; `--num-videos N`
+    for videos (simulation | decoded imagination of the plan)
+  - `visualize_e2e.py`: decoded real / reconstructed / rolled-out frames
+  - `cache_latents.py`: encode every dataset frame with the run's encoder
 - `tests/test_flow.py`: `python -m tests.test_flow`
-- Outputs: `results/<experiment>/[<run>_e<epoch>/]` (gitignored); stage-1 checkpoints in
-  `$STABLEWM_HOME/checkpoints/stage1/`; old stage-1 logs and sweep scripts in `results/stage1/logs/`.
-
-## Stage-1 recipe
-    python -m scripts.stage1.train_latent --variant head --steps 20000 --out head.pt
-    python -m scripts.stage1.train_latent --variant none --steps 20000 --out mse.pt
-    python -m scripts.stage1.eval_rollout --models pretrained mse.pt head.pt
-    python -m scripts.eval_plan --model head.pt
-
-## Stage-1 results (Push-T, 2026-11-10)
-All dynamics start from the released predictor and train on cached latents
-(5% of episodes held out). Rollout error = per-dim MSE on 2048 held-out windows (k steps,
-history 3). Planning = CEM 300x30 in the simulator, the 50 `eval.py` tasks (seed 42),
-25-step goals, budget 50. One seed: differences of 1-3 tasks are noise.
-JSON: `save/eval_*.json`, `save/plan_results.jsonl`, `save/plan_noisy.jsonl`.
-
-**Clean Push-T (deterministic)**
-
-| model | k=1 | k=5 | k=10 | k=20 | planning |
-|---|---|---|---|---|---|
-| released predictor | .0073 | .071 | .250 | .599 | 92% |
-| `mse.pt` (MSE, 10k steps) | .0040 | .035 | .127 | .350 | **98%** |
-| `head.pt` (B, 20k) MSE head | .0038 | .033 | .126 | .346 | 94% |
-| `head.pt` 1 sample | .0039 | .040 | .160 | .442 | 96% (2.4x time) |
-| `head.pt` x̂(τ=0) mean mode | .0036 | .038 | .153 | .436 | 94% |
-| `head.pt` 4 samples / mean of 16 | .0034 | .033 | .128 | .333 | 96% (4 samples, 7.7x time) |
-| `ar.pt` (A, 10k) mean of 16 | .047 | .43 | 1.02 | 1.37 | - |
-| `ar_ctx.pt` (A, `--ctx-frac 0.5`) mean of 16 | .033 | .29 | .70 | 1.01 | - |
-
-- The gain over the released model is fine-tuning, not the flow (`mse.pt` matches B).
-- B's flow loss is smooth in τ, samples have real-latent SIGReg statistics, and the
-  flow does not hurt the trunk. One sample adds about the ensemble variance to the error.
-- Spread ranks error (Spearman .5-.7) but is overconfident (err/var 3-9): the error is model
-  error, not aleatoric. Endpoint drift tracks spread only at k=1 (.63 -> .06 at k=20).
-- Variant A trained with logit-normal τ per frame rarely sees near-clean history (inference uses
-  τ=0.9); matching it (`ctx_frac`) helps a lot but A is still 10x worse than B at 10k steps and
-  costs 30x the MSE model per CEM iteration.
-
-**Stochastic test: model sees actions + N(0,1) noise (normalised units)**
-
-| model | k=1 | k=5 | k=10 | k=20 |
-|---|---|---|---|---|
-| `mse_an1.pt` | .0148 | .176 | .531 | 1.12 |
-| `head_an1.pt` MSE head | .0148 | .176 | .533 | 1.11 |
-| `head_an1.pt` 1 sample | .021 | .237 | .661 | 1.42 |
-| `head_an1.pt` mean of 16 | .0155 | .179 | **.460** | **.855** |
-
-- With real aleatoric uncertainty, the 16-sample mean beats MSE by 13% at k=10 and 24% at k=20
-  (MSE rollouts feed blurred means back in). Calibration improves (err/var 1.4-2.5).
-
-**Planning with executed-action noise σ=1** (`--exec-noise 1.0`): released 26%, `mse.pt` 36%,
-`mse_an1` 18%, `head_an1` 1 sample 10%. Caveat: the `*_an1` models learned p(z' | true + noise),
-which shrinks the action effect, while planning needs p(z' | commanded), executed = commanded + noise.
-They are the wrong conditional for planning; a proper test needs rollouts logged with commanded
-actions and noisy execution.
-
-**Variant A follow-up.** The first A runs trained the whole transformer at the pretrained
-learning rate (3e-5). 16-sample mean, clean Push-T, 10k steps each:
-
-| run | k=1 | k=5 | k=10 | k=20 |
-|---|---|---|---|---|
-| `ar_ctx` lr 3e-5, `--ctx-frac 0.5` | .033 | .29 | .70 | 1.01 |
-| `ar_lr` `--trunk-lr 3e-4 --ctx-frac 0.5` | .014 | .13 | .35 | .68 |
-| `ar_lr_c97` + `--ctx-tau 0.97` | .014 | .14 | .37 | .72 |
-| `ar_lr_w` + `--tau-weight` (Dreamer 4 ramp) | .013 | .13 | .34 | .65 |
-| `ar_f09` `--ctx-frac 0.9` | .010 | .10 | .31 | .63 |
-| `ar_f09_scratch` + `--init none` | **.0089** | **.096** | **.29** | **.60** |
-| B / `mse.pt` (reference) | .0034 / .0040 | .033 / .035 | .13 / .13 | .33 / .35 |
-
-The context signal level doesn't matter, and one-step mean mode equals the ensemble, so the error
-is in the network. Training more windows in the inference regime helps most, and the released
-weights don't help A (they were trained for a different output). A still gets one target per
-window vs B's 3 tokens x 4 taus. Next: dense clean-context training (clean context tokens plus
-noisy target tokens in one sequence, with an attention mask so every frame is a target with
-clean history).
+- Outputs: `results/<experiment>/<run>_e<epoch>/` (gitignored); weights in `$STABLEWM_HOME/checkpoints/`.
 
 ## End-to-end (encoder + flow B from scratch, with decoder), 2026-11-11
 
@@ -122,5 +44,4 @@ still falling (flow .0071, MSE head .0101, decoder .0108, SIGReg 1.24; no collap
   Verified: with `+trainer.deterministic=true` the WM weights are bit-identical with and without
   the decoder. Reconstructions are sharp; see `python -m scripts.visualize_e2e`.
 - **Planning** (`eval_plan.py --run lewm_flow_e2e --epoch 14`, same 50 tasks):
-  MSE head 72%, 1 flow sample 52%, mean mode 34% (released LeWM 92%). The model is undertrained;
-  the flow-vs-MSE ordering matches stage 1.
+  MSE head 72%, 1 flow sample 52%, mean mode 34% (released LeWM 92%). The model is undertrained.

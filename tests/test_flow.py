@@ -9,9 +9,26 @@ import torch
 from torch import nn
 
 import jepa
-from helpers.models import build_dynamics
 
 D = 8
+
+# Push-T model shapes, as in the trained runs' config.json (random init, no image encoder)
+_PRED = dict(input_dim=192, hidden_dim=192, output_dim=192, depth=6, heads=16, mlp_dim=2048, dim_head=64,
+             dropout=0.1, emb_dropout=0.0)
+
+
+def build_model(variant="none", **kw):
+    """JEPA without encoder: variant none (MSE) | head (B) | transformer (A)."""
+    import module
+
+    mlp = lambda: module.MLP(input_dim=192, output_dim=192, hidden_dim=2048, norm_fn=nn.BatchNorm1d)  # noqa: E731
+    act = module.Embedder(input_dim=10, emb_dim=192)
+    if variant == "transformer":
+        return jepa.JEPA(None, module.FlowARPredictor(num_frames=4, **_PRED), act, None, None,
+                         flow_variant="transformer", **kw)
+    head = module.FlowHead(dim=192, width=512, depth=4) if variant == "head" else None
+    return jepa.JEPA(None, module.ARPredictor(num_frames=3, **_PRED), act, None, mlp(), flow_head=head,
+                     flow_variant=variant, **kw)
 
 
 class GaussianDenoiser(nn.Module):
@@ -95,7 +112,7 @@ class FakeEncoder(nn.Module):
 
 def test_mse_rollout_unchanged_from_original():
     torch.manual_seed(0)
-    new = build_dynamics("none", init="pretrained").eval()
+    new = build_model("none").eval()
     new.encoder = FakeEncoder()
     old = _original_jepa().JEPA(new.encoder, new.predictor, new.action_encoder, None, new.pred_proj).eval()
     info = lambda: {"pixels": torch.randn(1, 4, 1, 3, 2, 2, generator=torch.Generator().manual_seed(1)),
@@ -109,7 +126,7 @@ def test_mse_rollout_unchanged_from_original():
 
 def test_flow_variants_plan_with_noise_repeats():
     for variant in ("head", "transformer"):
-        m = build_dynamics(variant, init="pretrained", plan_noise=3, risk_weight=0.5).eval()
+        m = build_model(variant, plan_noise=3, risk_weight=0.5).eval()
         m.encoder = FakeEncoder()
         info = {"pixels": torch.randn(1, 4, 1, 3, 2, 2), "goal": torch.randn(1, 4, 1, 3, 2, 2),
                 "action": torch.zeros(1, 4, 1, 10)}
@@ -122,9 +139,9 @@ def test_flow_variants_plan_with_noise_repeats():
             assert torch.allclose(c1, c2)
 
 
-def test_transformer_pretrained_init_matches_mse_trunk_at_clean_context():
-    """Variant A copies the released trunk; this only checks shapes and finiteness of the loss."""
-    m = build_dynamics("transformer", init="pretrained")
+def test_transformer_flow_loss_is_finite():
+    """Variant A: shapes and finiteness of the loss."""
+    m = build_model("transformer")
     z, a = torch.randn(4, 4, 192), torch.randn(4, 4, 192)
     out = m.flow_loss(z, a, 3, 1)
     assert out["flow_loss"].isfinite() and out["mse_pred"] is None
