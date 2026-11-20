@@ -32,15 +32,20 @@ stage() {
   for f in "$@"; do [ -e $TMPDIR/swm/datasets/$f ] || cp -rL $STABLEWM_HOME/datasets/$f $TMPDIR/swm/datasets/; done
   export LOCAL_DATASET_DIR=$TMPDIR/swm
 }
-# dataset (DS=pusht|cube) -> file name and hydra overrides. Training reads .lance (per-frame JPEG): the
+# dataset (DS=pusht|cube|tworoom|reacher|carracing) -> file name and hydra overrides. Training reads .lance (per-frame JPEG): the
 # downloaded .h5 compresses pixels in 100-frame chunks, which made data loading ~8x slower than the GPU.
 # Cube: the lance reader matches a keys_to_merge regex only against loaded keys (h5 matches all
 # columns), so the proprio columns are listed explicitly, in the h5 reader's (alphabetical) order.
-ds_file() { case ${DS:-pusht} in pusht) echo pusht_expert_train.lance ;; cube) echo cube_single_expert.lance ;; esac; }
+ds_file() { case ${DS:-pusht} in pusht) echo pusht_expert_train.lance ;; cube) echo cube_single_expert.lance ;; tworoom) echo tworoom.lance ;; reacher) echo reacher.lance ;; carracing) echo carracing_ubends_cap45_asphalt_zstd.h5 ;; esac; }
 ds_args() {
   case ${DS:-pusht} in
     pusht) echo "data=pusht data.dataset.name=$(ds_file)" ;;
     cube)  echo "data=ogb data.dataset.name=$(ds_file) data.dataset.keys_to_merge.proprio=[proprio_effector_pos,proprio_effector_yaw,proprio_gripper_contact,proprio_gripper_opening,proprio_gripper_vel,proprio_joint_pos,proprio_joint_vel]" ;;
+    tworoom) echo "data=tworoom data.dataset.name=$(ds_file)" ;;
+    reacher) echo "data=dmc data.dataset.name=$(ds_file)" ;;
+    # CarRacing: data config in the platform-test repo ($B/lwai/config/data/carracing.yaml); the dataset is
+    # written by $B/lwai/snellius/to_swm.sbatch (all-asphalt stretches only, frames Blosc/zstd one per chunk)
+    carracing) echo "hydra.searchpath=[file://$B/lwai/config] data=carracing data.dataset.name=$(ds_file)" ;;
   esac
 }
 # variant -> hydra overrides. All from scratch, LeWM recipe, D = detached visualisation decoder.
