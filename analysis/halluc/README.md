@@ -19,7 +19,7 @@ A window = one replan: 1 context frame + 5 imagined action blocks (FRAMESKIP = 5
 ## Order (pusht)
 
 Jobs: `sbatch -J <name> jobs/snellius/halluc.sbatch <module> <args>` runs `python -m <module> <args>`
-from this checkout (the `le-wm-thesis` worktree).
+from the le-wm checkout (thesis branch).
 
 1. **Val windows → hand labels.** `analysis.halluc.export --set pusht_v1 --n 100 --annotate`
    (random, non-overlapping windows of the training run's val split; ids shuffled). Open

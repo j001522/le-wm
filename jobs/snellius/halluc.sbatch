@@ -1,6 +1,6 @@
 #!/bin/bash
 # Hallucination experiments (analysis/halluc, thesis branch): runs one python module with the given
-# arguments from the thesis checkout ($REPO, default $B/le-wm-thesis, a git worktree of le-wm).
+# arguments from the le-wm checkout ($REPO, default $B/le-wm, on the thesis branch).
 #   sbatch -J halluc_export  halluc.sbatch analysis.halluc.export  --set pusht_v1 --n 100 --annotate
 #   sbatch -J halluc_metrics halluc.sbatch analysis.halluc.metrics --sets pusht_v1
 #   sbatch -J halluc_plan -t 03:00:00 halluc.sbatch scripts.eval_plan --run pusht_LeWM-MSE-dFH-D --mse-head \
@@ -9,7 +9,7 @@
 #SBATCH -p gpu_mig --gpus=1 -c 9 -t 01:00:00 -J halluc
 #SBATCH -o /gpfs/work4/0/prjs0951/Giacomo/LeWM/logs/%x_%j.out
 source /gpfs/work4/0/prjs0951/Giacomo/LeWM/le-wm/jobs/snellius/common.sh
-REPO=${REPO:-$B/le-wm-thesis}
+REPO=${REPO:-$B/le-wm}
 export PYTHONPATH=$REPO:$B/pylib
 export HF_HUB_OFFLINE=1                    # DINOv2 weights from the local HF cache (compute nodes are offline)
 cd $REPO
