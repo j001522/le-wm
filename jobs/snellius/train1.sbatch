@@ -1,7 +1,7 @@
 #!/bin/bash
 # One variant on one GPU, paper recipe (10 epochs).
 #   usage:   sbatch -p <partition> -J <ds>_<variant> train1.sbatch <variant> [hydra overrides...]
-#   The dataset (pusht|cube) is the job-name prefix: Snellius does not pass the submitting shell's
+#   The dataset (pusht|cube|tworoom|reacher|carracing) is the job-name prefix: Snellius does not pass the submitting shell's
 #   environment into batch jobs, so DS=cube sbatch ... silently trained on pusht.
 #   example: for p in gpu_h100 gpu_a100; do sbatch -p $p -J pusht_LeWM-D train1.sbatch LeWM-D; done
 #   variants: LeWM-D  LeWM-MSE-dFH-D  LeWM-FH-D  LeWM-MSE-FH-D  LeFWM-D   (see common.sh)
@@ -13,7 +13,7 @@ scancel -u $USER -n $SLURM_JOB_NAME --state=PENDING
 echo "running $SLURM_JOB_NAME in job $SLURM_JOB_ID on $SLURM_JOB_PARTITION $(hostname) at $(date)"
 source /gpfs/work4/0/prjs0951/Giacomo/LeWM/le-wm/jobs/snellius/common.sh
 export DS=${SLURM_JOB_NAME%%_*}
-case $DS in pusht|cube) ;; *) echo "job name must start with pusht_ or cube_, got $SLURM_JOB_NAME"; exit 1 ;; esac
+case $DS in pusht|cube|tworoom|reacher|carracing) ;; *) echo "job name must start with pusht_, cube_, tworoom_, reacher_ or carracing_, got $SLURM_JOB_NAME"; exit 1 ;; esac
 v=$1; shift; name=${DS}_$v
 [ "$SLURM_JOB_NAME" = "$name" ] || { echo "job name $SLURM_JOB_NAME does not match ${name}"; exit 1; }
 [ -n "$(variant_args $v | grep model=)" ] || { echo "unknown variant $v"; exit 1; }
