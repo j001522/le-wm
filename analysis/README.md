@@ -21,3 +21,9 @@ Run in this order (later scripts read `eval_edge`'s outputs; all write to `resul
 
 `eval_edge` and `eval_surprise` read `u_f` (flow endpoint drift), which only flow models produce
 (`rollout_latents` returns no drift without one), so they need a flow run, not e.g. `pusht_LeWM-D`.
+
+## halluc/ — do the predictors (u_r, u_f, u_s) detect hallucinations, offline and while planning?
+
+Val-window imagination → hand labels → label metric (masked Hausdorff, DINOv2, dPSNR) → automatic
+labels on the rest of the val set and on planning replans → predictor AUROC. Port of the dreamer4
+experiments; order and definitions in `halluc/README.md`.

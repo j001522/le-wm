@@ -20,6 +20,13 @@ ep<k>_<success|fail>.mp4, a tiled overview.mp4, and results.json.
 
 --exec-noise adds N(0, (exec_noise * action std)^2) to every executed env action (normalised units
 as in training); videos show the noisy execution.
+
+Hallucination recording (--halluc-set NAME [--halluc-out ROOT], needs the decoder and --mse-head for
+flow runs): every replan is written as one window of the analysis/halluc export format in
+ROOT/NAME (default ROOT: results/halluc/<run>_e<epoch>):
+the sim observations after k = 0..5 blocks of the executed plan, the decoded imagination of that plan
+(MSE head, as planned) and the predictors u_r / u_f / u_s / motion. Plans cut short by the episode end
+(budget or success) keep the blocks they reached (meta n_imag < 5).
 """
 
 import os
@@ -37,8 +44,9 @@ import torch
 
 from helpers.constants import FRAMESKIP, TASKS, run_dir
 from helpers.models import load_run
+from analysis.halluc.rollout import SetWriter, imagine, set_root
 from helpers.planning import cem_solver, fit_scalers, image_transform, load_planning_dataset, pick_tasks
-from helpers.video import decode, imagenet_norm, to_uint8, write_video
+from helpers.video import decode, encode, imagenet_norm, to_uint8, write_video
 
 
 class PlanPolicy(swm.policy.WorldModelPolicy):
@@ -46,9 +54,10 @@ class PlanPolicy(swm.policy.WorldModelPolicy):
     - records sim frames and, at each replan, the decoded imagined rollout (decoder given), and
     - adds Gaussian noise to the executed actions (exec_noise > 0)."""
 
-    def __init__(self, *args, decoder=None, exec_noise=0.0, act_std=None, seed=0, **kw):
+    def __init__(self, *args, decoder=None, exec_noise=0.0, act_std=None, seed=0, halluc=None, **kw):
         super().__init__(*args, **kw)
         self.decoder = decoder
+        self.halluc = halluc  # None or dict(n_seeds=, seed=): record replan windows with predictors
         self.exec_noise, self.act_std = exec_noise, act_std
         self.rng = np.random.default_rng(seed)
         self.norm = imagenet_norm()
@@ -63,6 +72,9 @@ class PlanPolicy(swm.policy.WorldModelPolicy):
         self.imag = [None] * n                 # decoded rollout of the current plan
         self.since_plan = [0] * n
         self.goal = [None] * n
+        self.steps = [0] * n                   # env steps taken
+        self.cur = [None] * n                  # halluc: the current plan's window being filled
+        self.chunks = [[] for _ in range(n)]   # halluc: finished windows per env
         solve = self.solver
 
         def solve_timed(info, init_action=None):
@@ -83,6 +95,15 @@ class PlanPolicy(swm.policy.WorldModelPolicy):
         """Roll the chosen plans out with the world model and decode every latent."""
         model = self.solver.model
         dev = next(model.parameters()).device
+        if self.halluc is not None:
+            out = imagine(model, self.decoder, info["pixels"].to(dev), actions.to(dev, torch.float32),
+                          n_seeds=self.halluc["n_seeds"], seed=self.halluc["seed"])
+            H = info["pixels"].size(1)
+            self._pending = [{"wm": out["wm"][b, H - 1:], "z": out["z"][b, H - 1:],
+                              "act": actions[b].cpu().numpy(),
+                              "pred": {k: out[k][b] for k in ("u_r", "u_f", "u_s", "drift", "motion")}}
+                             for b in range(actions.size(0))]
+            return
         embs = []
         for b in range(actions.size(0)):  # one env at a time: get_cost's goal broadcast assumes batch 1, as in CEM
             ex = {k: v[b:b + 1].to(dev).unsqueeze(1) if torch.is_tensor(v) else v for k, v in info.items()}
@@ -133,7 +154,14 @@ class PlanPolicy(swm.policy.WorldModelPolicy):
                 k = self.since_plan[i] // FRAMESKIP
                 if self.imag[i] is not None and self.since_plan[i] % FRAMESKIP == 0 and k < len(self.imag[i]):
                     self.frames[i].append((to_uint8(px[i]), self.imag[i][k], self.goal[i], k))
-                self.imag[i], self.since_plan[i] = self._pending[row], 0
+                    if self.cur[i] is not None:
+                        self.cur[i]["real"].append(to_uint8(px[i]))
+                new = self._pending[row]
+                if isinstance(new, dict):  # halluc recording
+                    self._close_chunk(i)
+                    self.cur[i] = {**new, "real": [], "step": self.steps[i]}
+                    new = new["wm"]
+                self.imag[i], self.since_plan[i] = new, 0
         for i in range(n):
             if self.imag[i] is None or np.isnan(action[i]).all():
                 continue
@@ -143,7 +171,19 @@ class PlanPolicy(swm.policy.WorldModelPolicy):
                 k = self.since_plan[i] // FRAMESKIP
                 if k < len(self.imag[i]):
                     self.frames[i].append((to_uint8(px[i]), self.imag[i][k], self.goal[i], k))
+                    if self.cur[i] is not None:
+                        self.cur[i]["real"].append(to_uint8(px[i]))
             self.since_plan[i] += 1
+            self.steps[i] += 1
+
+    def _close_chunk(self, i):
+        c, self.cur[i] = self.cur[i], None
+        if c is not None and len(c["real"]) >= 2:  # context + at least one imagined block
+            self.chunks[i].append(c)
+
+    def close_chunks(self):
+        for i in range(len(self.cur)):
+            self._close_chunk(i)
 
 
 class _CallWrapper:
@@ -207,6 +247,35 @@ def write_videos(policy, episodes, starts, succ, n, fps, out):
     write_video(grid, out / "overview", fps)
 
 
+def write_halluc(policy, model, decoder, episodes, starts, succ, a):
+    """Every recorded replan as one window of the analysis/halluc export format."""
+    policy.close_chunks()
+    rms = lambda x: np.linalg.norm(x, axis=-1) / np.sqrt(x.shape[-1])
+    w = SetWriter(a.halluc_out, a.halluc_set, ctx=1, annotate=False)
+    n = 0
+    for i, chunks in enumerate(policy.chunks):
+        for r, c in enumerate(chunks):
+            T = len(c["real"])  # 1 context + n_imag blocks reached
+            sid = f"{a.halluc_set}_s{a.seed}_e{i:03d}_r{r}"
+            meta = {"episode": int(episodes[i]), "start": int(starts[i]), "env": i, "replan": r,
+                    "env_step": c["step"], "n_imag": T - 1, "success": bool(succ[i]), "run": a.run,
+                    "epoch": a.epoch, "frameskip": FRAMESKIP, "source": "plan", "seed": a.seed,
+                    "n_seeds": a.halluc_seeds, "head": "mse", "exec_noise": a.exec_noise}
+            pred = {k: v[:T - 1] for k, v in c["pred"].items()}
+            real = np.stack(c["real"])
+            zr = encode(model, real)  # real latents: recon (decoder ceiling) and the oracle columns
+            recon = decode(decoder, torch.from_numpy(zr).cuda())
+            pred["oracle_e_z"] = rms(c["z"][1:T] - zr[1:])
+            pred["oracle_motion_real"] = rms(zr[1:] - zr[:-1])
+            w.add(sid, a.task, real, c["wm"][:T], recon, c["act"], c["z"][:T], zr, pred, meta,
+                  {"idx": n, "start": int(starts[i]) + c["step"], "episode": f"s{a.seed}_e{i:03d}",
+                   "data_dir": "plan", "pick": "all", "horizon_motion": float("nan"),
+                   "replan": r, "n_imag": T - 1, "success": int(succ[i])})
+            n += 1
+    w.close()
+    return n
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--run", required=True, help="trained run under <swm>/checkpoints")
@@ -227,14 +296,22 @@ def main():
     p.add_argument("--num-videos", type=int, default=0, help="save videos for the first N episodes (needs a decoder)")
     p.add_argument("--fps", type=float, default=2)
     p.add_argument("--out", default=None, help="video dir (default: results/plan/<run>_e<epoch>)")
+    p.add_argument("--halluc-set", default=None, help="record every replan as a hallucination window in this set")
+    p.add_argument("--halluc-out", default=None, help="sets root (default: results/halluc/<run>_e<epoch>)")
+    p.add_argument("--halluc-seeds", type=int, default=4, help="flow-head samples for u_f / u_s")
     a = p.parse_args()
+    if a.halluc_set:
+        a.halluc_out = a.halluc_out or str(set_root(a.run, a.epoch))
 
     task = TASKS[a.task]
     dataset = load_planning_dataset(a.dataset or task["dataset"], task["cols"])
     process = fit_scalers(dataset, task["cols"])
     tf = image_transform()
 
-    model, decoder = load_run(a.run, a.epoch, decoder=a.num_videos > 0)
+    model, decoder = load_run(a.run, a.epoch, decoder=a.num_videos > 0 or bool(a.halluc_out))
+    if a.halluc_out and (decoder is None or (getattr(model, "flow_head", None) is not None and not a.mse_head)):
+        raise SystemExit("--halluc-set needs the run's decoder, and --mse-head for flow runs "
+                         "(the recorded imagination is the MSE head's)")
     if a.num_videos > 0 and decoder is None:
         raise SystemExit(f"--num-videos needs a decoder, {a.run} has no decoder_epoch_{a.epoch}.pt")
     overrides = {k: v for k, v in dict(sample_steps=a.sample_steps, plan_noise=a.plan_noise,
@@ -251,6 +328,7 @@ def main():
         config=swm.PlanConfig(horizon=5, receding_horizon=5, action_block=FRAMESKIP),
         process=process, transform={"pixels": tf, "goal": tf}, decoder=decoder,
         exec_noise=a.exec_noise, act_std=np.sqrt(process["action"].var_), seed=a.seed,
+        halluc=dict(n_seeds=a.halluc_seeds, seed=a.seed) if a.halluc_out else None,
     )
     world.set_policy(policy)
     episodes, starts = pick_tasks(dataset, a.num_eval, a.goal_offset, a.seed)
@@ -273,6 +351,8 @@ def main():
            # CEM plans one env at a time (batch_size=1): seconds per env per replan
            "sec_per_plan_per_env": round(sum(policy.plan_times) / max(sum(policy.plan_envs), 1), 3),
            "gpu": torch.cuda.get_device_name(), "max_gpu_mem_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2)}
+    if a.halluc_out:
+        res["halluc_windows"] = write_halluc(policy, model, decoder, episodes, starts, succ, a)
     if a.num_videos > 0:
         out = Path(a.out) if a.out else run_dir("plan", a.run, a.epoch)
         out.mkdir(parents=True, exist_ok=True)

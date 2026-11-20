@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hallucination Annotator</title>
+<script src="manifest.js"></script>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1c1b19; --ink2: #5b5a55; --line: #dcdad3;
+    --accent: #2a78d6; --ctx: #e9e7e0; --yes: #c62828; --no: #1b8a4b; --unsure: #b7791f;
+    --chip: #efeee9; --chip-on: #1c1b19; --chip-on-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --ink2: #a4a29a; --line: #34332f;
+      --accent: #6aa7ef; --ctx: #2a2a26; --chip: #2a2a26; --chip-on: #ecebe6; --chip-on-ink: #161614;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px;
+           border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  .grow { flex: 1; }
+  button, select, input[type=text] { font: inherit; color: var(--ink); background: var(--panel);
+           border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--ink2); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 16px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .views { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  .view { text-align: center; }
+  .view .cap { font-size: 12px; color: var(--ink2); margin-bottom: 4px; letter-spacing: .02em; }
+  canvas { display: block; border-radius: 4px; background: #000; image-rendering: pixelated; max-width: 100%; }
+  .phase { text-align: center; margin: 10px 0 6px; font-weight: 600; }
+  .phase.ctx { color: var(--ink2); }
+  .timeline { position: relative; height: 34px; margin: 8px 0 4px; }
+  .timeline .track { position: absolute; inset: 12px 0 12px 0; border-radius: 5px; background: var(--line); }
+  .timeline .ctxband { position: absolute; top: 12px; bottom: 12px; left: 0; background: var(--ctx);
+                       border-radius: 5px 0 0 5px; border: 1px dashed var(--ink2); }
+  .timeline input[type=range] { position: absolute; inset: 0; width: 100%; margin: 0; background: transparent; }
+  .timeline .onset { position: absolute; top: 2px; bottom: 2px; width: 3px; background: var(--yes);
+                     border-radius: 2px; pointer-events: none; display: none; }
+  .ticks { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink2); font-variant-numeric: tabular-nums; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin-top: 8px; }
+  .row { margin: 12px 0; }
+  .row > .lbl { font-size: 12px; font-weight: 600; color: var(--ink2); text-transform: uppercase;
+                letter-spacing: .05em; margin-bottom: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--line); background: var(--chip); border-radius: 999px; padding: 5px 12px;
+          cursor: pointer; user-select: none; }
+  .chip kbd { font-size: 10px; opacity: .6; margin-left: 4px; }
+  .chip.on { background: var(--chip-on); color: var(--chip-on-ink); border-color: var(--chip-on); }
+  .chip.v-yes.on { background: var(--yes); border-color: var(--yes); color: #fff; }
+  .chip.v-no.on { background: var(--no); border-color: var(--no); color: #fff; }
+  .chip.v-unsure.on { background: var(--unsure); border-color: var(--unsure); color: #fff; }
+  textarea { width: 100%; min-height: 64px; font: inherit; color: var(--ink); background: var(--bg);
+             border: 1px solid var(--line); border-radius: 6px; padding: 6px; resize: vertical; }
+  .warn { color: var(--yes); font-size: 13px; min-height: 18px; }
+  .status { font-size: 12px; color: var(--ink2); }
+  details { margin-top: 12px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  dl { margin: 8px 0 0; } dt { font-weight: 600; margin-top: 8px; } dd { margin: 2px 0 0 0; color: var(--ink2); }
+  .keys { font-size: 12px; color: var(--ink2); columns: 2; margin-top: 8px; }
+  kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
+        border-radius: 4px; padding: 0 4px; background: var(--bg); }
+  .progress { height: 6px; width: 160px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .progress > div { height: 100%; background: var(--no); width: 0; }
+  .err { padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Hallucination annotator</h1>
+  <span id="setname" class="status"></span>
+  <label class="status">Annotator <input id="annotator" type="text" size="10" placeholder="your name"></label>
+  <span class="grow"></span>
+  <div class="progress" title="annotated / total"><div id="progbar"></div></div>
+  <span id="progtxt" class="status"></span>
+  <button id="prev" title="previous sequence">&larr; Prev</button>
+  <select id="seqsel"></select>
+  <button id="next" title="next sequence">Next &rarr;</button>
+  <button id="nextTodo" title="next unannotated">Next to do</button>
+  <button id="export">Export CSV + JSON</button>
+  <label class="status" style="cursor:pointer"><u>Import JSON</u><input id="import" type="file" accept=".json" hidden></label>
+</header>
+
+<main id="app">
+  <section class="card">
+    <div class="views">
+      <div class="view"><div class="cap">SIMULATION (ground truth)</div><canvas id="cv-gt"></canvas></div>
+      <div class="view"><div class="cap">WORLD MODEL</div><canvas id="cv-wm"></canvas></div>
+      <div class="view" id="flickwrap" style="display:none">
+        <div class="cap" id="flickcap">FLICKER (sim / WM)</div><canvas id="cv-fl"></canvas></div>
+    </div>
+    <div id="phase" class="phase"></div>
+    <div class="timeline">
+      <div class="track"></div><div class="ctxband" id="ctxband"></div>
+      <div class="onset" id="onsetmark"></div>
+      <input type="range" id="slider" min="0" value="0" step="1">
+    </div>
+    <div class="ticks" id="ticks"></div>
+    <div class="controls">
+      <button id="first" title="Home">&#9198;</button>
+      <button id="stepb" title="&larr;">&#9664; frame</button>
+      <button id="play" class="primary" title="Space">Play</button>
+      <button id="stepf" title="&rarr;">frame &#9654;</button>
+      <button id="jump" title="first imagined frame (G)">&#9197; imagined</button>
+      <label class="status">speed <select id="fps">
+        <option value="1">1 fps</option><option value="2">2 fps</option><option value="4" selected>4 fps</option>
+        <option value="8">8 fps</option></select></label>
+      <label class="status">zoom <select id="zoom">
+        <option value="1">1&times;</option><option value="2" selected>2&times;</option><option value="3">3&times;</option></select></label>
+      <label class="status"><input type="checkbox" id="loophz" checked> loop imagined only</label>
+      <button id="flick" title="F">Flicker panel</button>
+    </div>
+  </section>
+
+  <aside class="card">
+    <div class="status" id="seqinfo"></div>
+    <div class="row">
+      <div class="lbl">Hallucination?</div>
+      <div class="chips" id="verdict">
+        <span class="chip v-yes" data-v="yes">Yes<kbd>Y</kbd></span>
+        <span class="chip v-no" data-v="no">No<kbd>N</kbd></span>
+        <span class="chip v-unsure" data-v="unsure">Unsure<kbd>U</kbd></span>
+      </div>
+    </div>
+    <div class="row">
+      <div class="lbl">Type (all that apply)</div>
+      <div class="chips" id="types"></div>
+    </div>
+    <div class="row">
+      <div class="lbl">Onset (first imagined frame where it is visible)</div>
+      <div class="controls" style="justify-content:flex-start;margin:0">
+        <button id="setonset" title="O">Set to current frame <kbd>O</kbd></button>
+        <button id="clronset">Clear</button>
+        <span id="onsettxt" class="status"></span>
+      </div>
+    </div>
+    <div class="row">
+      <div class="lbl">Confidence</div>
+      <div class="chips" id="conf">
+        <span class="chip" data-c="1">Low<kbd>A</kbd></span>
+        <span class="chip" data-c="2">Medium<kbd>S</kbd></span>
+        <span class="chip" data-c="3">High<kbd>D</kbd></span>
+      </div>
+    </div>
+    <div class="row">
+      <div class="lbl">Notes</div>
+      <textarea id="notes" placeholder="optional: what you saw, which object, why unsure"></textarea>
+    </div>
+    <div class="warn" id="warn"></div>
+    <div class="controls" style="justify-content:flex-start">
+      <button id="save" class="primary" title="Enter">Save &amp; next to do <kbd>Enter</kbd></button>
+      <button id="clear">Clear this sequence</button>
+    </div>
+    <div class="status" id="savedtxt"></div>
+
+    <details open>
+      <summary>Guideline</summary>
+      <dl>
+        <dt>Judge the imagined frames only</dt>
+        <dd>Frames before the dashed line are context: the model is given the real frames and
+            the WM panel only shows their tokenizer reconstruction. Compare each imagined WM frame
+            with the simulation at the same time step.</dd>
+        <dt>Not a hallucination</dt>
+        <dd>Uniform blur or softness, slight colour/brightness shift, a small constant offset
+            (a few px) that does not grow, missing texture detail. Ignore the reacher's central
+            joint and the cup-catch string.</dd>
+        <dt>Invented</dt><dd>Something appears in the WM that is not in the simulation: an extra or
+            duplicated object/part, an object reappearing where there is none.</dd>
+        <dt>Missed</dt><dd>Something present in the simulation is absent, vanishes or fades out in the WM.</dd>
+        <dt>Teleport</dt><dd>An object jumps discontinuously between two consecutive WM frames
+            (implausible position change), unlike the simulation.</dd>
+        <dt>Warp</dt><dd>An object's shape, size or structure is distorted: bent or stretched arm,
+            deformed ball, parts merging or melting.</dd>
+        <dt>Drifting</dt><dd>The object looks right but its position/pose progressively diverges from the
+            simulation: wrong direction or speed, lagging, or frozen while the real one moves.</dd>
+        <dt>Onset</dt><dd>The first imagined frame where the problem is clearly visible (step with
+            <kbd>&larr;</kbd><kbd>&rarr;</kbd>, then <kbd>O</kbd>).</dd>
+        <dt>Unsure</dt><dd>Use it rather than guessing; say why in the notes.</dd>
+      </dl>
+      <div class="keys">
+        <div><kbd>Space</kbd> play/pause</div><div><kbd>&larr;</kbd><kbd>&rarr;</kbd> frame</div>
+        <div><kbd>Home</kbd> first frame</div><div><kbd>G</kbd> first imagined</div>
+        <div><kbd>Y</kbd><kbd>N</kbd><kbd>U</kbd> verdict</div><div><kbd>1</kbd>&ndash;<kbd>5</kbd> types</div>
+        <div><kbd>O</kbd> onset = current</div><div><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> confidence</div>
+        <div><kbd>F</kbd> flicker panel</div><div><kbd>Enter</kbd> save &amp; next</div>
+        <div><kbd>PgUp</kbd><kbd>PgDn</kbd> prev/next seq</div>
+      </div>
+    </details>
+  </aside>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const M = window.MANIFEST;
+  if (!M) {
+    document.getElementById("app").innerHTML =
+      '<div class="err card">manifest.js not found. Open this file from the export folder ' +
+      '(next to manifest.js and frames/).</div>';
+    return;
+  }
+  const TYPES = [["invented", "Invented"], ["missed", "Missed"], ["teleport", "Teleport"],
+                 ["warp", "Warp"], ["drifting", "Drifting"]];
+  const CTX = M.ctx, T = M.T, [IH, IW] = M.size, SEQS = M.seqs;
+  const STORE = "halluc-annot:" + M.set;
+  const $ = (id) => document.getElementById(id);
+
+  // ---------------- state ----------------
+  let store = {};
+  try { store = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) { store = {}; }
+  const persist = () => { try { localStorage.setItem(STORE, JSON.stringify(store)); } catch (e) {} };
+  let meta = store.__meta || {};
+  $("annotator").value = meta.annotator || "";
+  $("annotator").addEventListener("input", () => {
+    meta.annotator = $("annotator").value.trim(); store.__meta = meta; persist(); });
+
+  let cur = Math.max(0, SEQS.indexOf(meta.last));
+  let t = 0, playing = false, timer = null, flick = false, flickOn = false, flickTimer = null;
+  let imgs = { gt: [], wm: [] }, loadedFor = null, openedAt = Date.now();
+
+  const rec = (id) => store[id] || null;
+  const isDone = (id) => { const r = rec(id); return !!(r && r.verdict); };
+
+  // ---------------- images ----------------
+  function load(id) {
+    const o = { gt: [], wm: [] };
+    for (let k = 0; k < T; k++) {
+      for (const s of ["gt", "wm"]) {
+        const im = new Image();
+        im.src = `frames/${id}/${s}_${String(k).padStart(2, "0")}.png`;
+        im.onload = () => { if (loadedFor === id) draw(); };
+        o[s].push(im);
+      }
+    }
+    return o;
+  }
+  const preloaded = {};
+  function frames(id) { return preloaded[id] || (preloaded[id] = load(id)); }
+
+  // ---------------- drawing ----------------
+  function sizeCanvases() {
+    const z = +$("zoom").value;
+    for (const c of ["cv-gt", "cv-wm", "cv-fl"]) {
+      const cv = $(c); cv.width = IW * z; cv.height = IH * z;
+    }
+    draw();
+  }
+  function blit(cv, im) {
+    const g = cv.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    g.fillStyle = "#000"; g.fillRect(0, 0, cv.width, cv.height);
+    if (im && im.complete && im.naturalWidth) g.drawImage(im, 0, 0, cv.width, cv.height);
+  }
+  function draw() {
+    blit($("cv-gt"), imgs.gt[t]);
+    blit($("cv-wm"), imgs.wm[t]);
+    if (flick) {
+      blit($("cv-fl"), flickOn ? imgs.wm[t] : imgs.gt[t]);
+      $("flickcap").textContent = "FLICKER: " + (flickOn ? "WORLD MODEL" : "SIMULATION");
+    }
+    const ph = $("phase");
+    if (t < CTX) { ph.className = "phase ctx";
+      ph.textContent = `frame ${t} / ${T - 1}  ·  context (WM panel = reconstruction of the real frame)`; }
+    else { ph.className = "phase";
+      ph.textContent = `frame ${t} / ${T - 1}  ·  imagined step ${t - CTX + 1} / ${T - CTX}`; }
+    $("slider").value = t;
+  }
+  function setT(v) { t = Math.max(0, Math.min(T - 1, v)); draw(); }
+
+  // ---------------- playback ----------------
+  function stop() { playing = false; clearInterval(timer); $("play").textContent = "Play"; }
+  function play() {
+    stop(); playing = true; $("play").textContent = "Pause";
+    timer = setInterval(() => {
+      const lo = $("loophz").checked ? CTX : 0;
+      setT(t + 1 >= T ? lo : Math.max(t + 1, 0));
+    }, 1000 / +$("fps").value);
+  }
+  function toggleFlick() {
+    flick = !flick; $("flickwrap").style.display = flick ? "" : "none";
+    clearInterval(flickTimer);
+    if (flick) flickTimer = setInterval(() => { flickOn = !flickOn; draw(); }, 450);
+    draw();
+  }
+
+  // ---------------- form ----------------
+  const typesEl = $("types");
+  TYPES.forEach(([k, lab], i) => {
+    const s = document.createElement("span");
+    s.className = "chip"; s.dataset.t = k; s.innerHTML = `${lab}<kbd>${i + 1}</kbd>`;
+    typesEl.appendChild(s);
+  });
+  function draft() {
+    const id = SEQS[cur];
+    return store[id] || (store[id] = { id, verdict: "", types: [], onset: null, confidence: null,
+                                       notes: "", seconds: 0 });
+  }
+  function touch(r) {
+    r.annotator = meta.annotator || "";
+    r.updated = new Date().toISOString();
+    persist(); renderForm(); renderNav();
+  }
+  function renderForm() {
+    const id = SEQS[cur], r = rec(id) || {};
+    document.querySelectorAll("#verdict .chip").forEach(c => c.classList.toggle("on", r.verdict === c.dataset.v));
+    document.querySelectorAll("#types .chip").forEach(c => c.classList.toggle("on", (r.types || []).includes(c.dataset.t)));
+    document.querySelectorAll("#conf .chip").forEach(c => c.classList.toggle("on", String(r.confidence) === c.dataset.c));
+    if (document.activeElement !== $("notes")) $("notes").value = r.notes || "";
+    const om = $("onsetmark");
+    if (r.onset != null) {
+      om.style.display = "block"; om.style.left = `calc(${(r.onset / (T - 1)) * 100}% - 1px)`;
+      $("onsettxt").textContent = `frame ${r.onset} (imagined step ${r.onset - CTX + 1})`;
+    } else { om.style.display = "none"; $("onsettxt").textContent = "not set"; }
+    $("warn").textContent = problems(r).join(" ");
+    $("savedtxt").textContent = r.updated ? `saved locally ${new Date(r.updated).toLocaleTimeString()}` : "";
+    $("seqinfo").textContent = `Sequence ${id}  (${cur + 1} of ${SEQS.length})`;
+  }
+  function problems(r) {
+    const p = [];
+    if (!r || !r.verdict) return p;
+    if (r.verdict === "yes" && !(r.types || []).length) p.push("Pick at least one type.");
+    if (r.verdict === "yes" && r.onset == null) p.push("Set the onset frame.");
+    if (r.verdict === "no" && (r.types || []).length) p.push("Verdict is No but types are selected.");
+    if (!r.confidence) p.push("Set a confidence.");
+    return p;
+  }
+  function setVerdict(v) { const r = draft(); r.verdict = r.verdict === v ? "" : v; touch(r); }
+  function toggleType(k) {
+    const r = draft(); const s = new Set(r.types || []);
+    s.has(k) ? s.delete(k) : s.add(k); r.types = TYPES.map(x => x[0]).filter(x => s.has(x)); touch(r);
+  }
+  function setConf(c) { const r = draft(); r.confidence = r.confidence === c ? null : c; touch(r); }
+  function setOnset() {
+    if (t < CTX) { $("warn").textContent = "Onset must be an imagined frame (t ≥ " + CTX + ")."; return; }
+    const r = draft(); r.onset = t; touch(r);
+  }
+
+  // ---------------- navigation ----------------
+  function renderNav() {
+    const sel = $("seqsel"); const done = SEQS.filter(isDone).length;
+    sel.innerHTML = SEQS.map((id, i) => {
+      const r = rec(id); const mark = isDone(id) ? (problems(r).length ? "⚠" : "✓") : "·";
+      return `<option value="${i}"${i === cur ? " selected" : ""}>${mark} ${id}</option>`;
+    }).join("");
+    $("progtxt").textContent = `${done} / ${SEQS.length}`;
+    $("progbar").style.width = (100 * done / SEQS.length) + "%";
+  }
+  function accrueTime() {
+    const id = SEQS[cur], r = rec(id);
+    if (r) { r.seconds = Math.round((r.seconds || 0) + (Date.now() - openedAt) / 1000); persist(); }
+    openedAt = Date.now();
+  }
+  function go(i) {
+    accrueTime(); stop();
+    cur = (i + SEQS.length) % SEQS.length;
+    meta.last = SEQS[cur]; store.__meta = meta; persist();
+    loadedFor = SEQS[cur]; imgs = frames(SEQS[cur]);
+    if (cur + 1 < SEQS.length) frames(SEQS[cur + 1]);
+    t = 0; renderForm(); renderNav(); draw();
+  }
+  function nextTodo() {
+    for (let k = 1; k <= SEQS.length; k++) {
+      const i = (cur + k) % SEQS.length; if (!isDone(SEQS[i])) return go(i);
+    }
+    $("warn").textContent = "All sequences annotated. Export when ready.";
+  }
+  function saveNext() {
+    const r = rec(SEQS[cur]);
+    if (!r || !r.verdict) { $("warn").textContent = "Pick a verdict first."; return; }
+    const p = problems(r);
+    if (p.length) { $("warn").textContent = p.join(" "); return; }
+    touch(r); nextTodo();
+  }
+
+  // ---------------- export / import ----------------
+  function download(name, text, type) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  function exportAll() {
+    accrueTime();
+    const rows = SEQS.map(id => rec(id)).filter(r => r && r.verdict);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "");
+    const who = (meta.annotator || "anon").replace(/\W+/g, "_");
+    download(`annotations_${M.set}_${who}_${stamp}.json`,
+             JSON.stringify({ set: M.set, ctx: CTX, T, annotator: meta.annotator || "", rows }, null, 1),
+             "application/json");
+    const cols = ["id", "verdict", ...TYPES.map(x => x[0]), "onset", "onset_step", "confidence",
+                  "notes", "annotator", "updated", "seconds"];
+    const esc = (v) => { v = v == null ? "" : String(v); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+    const lines = [cols.join(",")].concat(rows.map(r => cols.map(c =>
+      TYPES.some(x => x[0] === c) ? +(r.types || []).includes(c)
+      : c === "onset_step" ? (r.onset == null ? "" : r.onset - CTX + 1) : esc(r[c])).join(",")));
+    download(`annotations_${M.set}_${who}_${stamp}.csv`, lines.join("\n") + "\n", "text/csv");
+  }
+  $("import").addEventListener("change", (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    f.text().then(txt => {
+      const d = JSON.parse(txt);
+      if (d.set && d.set !== M.set && !confirm(`File is for set "${d.set}", this is "${M.set}". Import anyway?`)) return;
+      let n = 0;
+      for (const r of d.rows || []) {
+        if (!SEQS.includes(r.id)) continue;
+        const old = rec(r.id);
+        if (!old || !old.updated || (r.updated || "") >= old.updated) { store[r.id] = r; n++; }
+      }
+      persist(); renderForm(); renderNav();
+      alert(`Imported ${n} annotations (newer ones kept).`);
+    }).catch(err => alert("Import failed: " + err));
+    e.target.value = "";
+  });
+
+  // ---------------- wiring ----------------
+  $("slider").max = T - 1;
+  $("slider").addEventListener("input", (e) => { stop(); setT(+e.target.value); });
+  $("ctxband").style.width = `calc(${((CTX - 0.5) / (T - 1)) * 100}%)`;
+  $("ticks").innerHTML = Array.from({ length: T }, (_, k) =>
+    `<span${k === CTX ? ' style="color:var(--ink);font-weight:600"' : ""}>${k}</span>`).join("");
+  $("first").onclick = () => { stop(); setT(0); };
+  $("stepb").onclick = () => { stop(); setT(t - 1); };
+  $("stepf").onclick = () => { stop(); setT(t + 1); };
+  $("jump").onclick = () => { stop(); setT(CTX); };
+  $("play").onclick = () => playing ? stop() : play();
+  $("fps").onchange = () => { if (playing) play(); };
+  $("zoom").onchange = sizeCanvases;
+  $("flick").onclick = toggleFlick;
+  $("prev").onclick = () => go(cur - 1);
+  $("next").onclick = () => go(cur + 1);
+  $("nextTodo").onclick = nextTodo;
+  $("seqsel").onchange = (e) => go(+e.target.value);
+  $("export").onclick = exportAll;
+  $("save").onclick = saveNext;
+  $("clear").onclick = () => { if (confirm("Clear the annotation of " + SEQS[cur] + "?")) {
+    delete store[SEQS[cur]]; persist(); renderForm(); renderNav(); } };
+  $("setonset").onclick = setOnset;
+  $("clronset").onclick = () => { const r = draft(); r.onset = null; touch(r); };
+  document.querySelectorAll("#verdict .chip").forEach(c => c.onclick = () => setVerdict(c.dataset.v));
+  document.querySelectorAll("#types .chip").forEach(c => c.onclick = () => toggleType(c.dataset.t));
+  document.querySelectorAll("#conf .chip").forEach(c => c.onclick = () => setConf(+c.dataset.c));
+  $("notes").addEventListener("input", () => { const r = draft(); r.notes = $("notes").value; touch(r); });
+
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "textarea" || (tag === "input" && e.target.type === "text")) {
+      if (e.key === "Escape") e.target.blur();
+      return;
+    }
+    const k = e.key;
+    const map = {
+      " ": () => playing ? stop() : play(),
+      "ArrowLeft": () => { stop(); setT(t - 1); }, "ArrowRight": () => { stop(); setT(t + 1); },
+      "Home": () => { stop(); setT(0); }, "End": () => { stop(); setT(T - 1); },
+      "g": () => { stop(); setT(CTX); }, "f": toggleFlick,
+      "y": () => setVerdict("yes"), "n": () => setVerdict("no"), "u": () => setVerdict("unsure"),
+      "o": setOnset, "a": () => setConf(1), "s": () => setConf(2), "d": () => setConf(3),
+      "Enter": saveNext, "PageUp": () => go(cur - 1), "PageDown": () => go(cur + 1),
+    };
+    const fn = map[k] || map[k.toLowerCase()] ||
+      (/^[1-5]$/.test(k) ? () => toggleType(TYPES[+k - 1][0]) : null);
+    if (fn && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); fn(); }
+  });
+  window.addEventListener("beforeunload", accrueTime);
+
+  $("setname").textContent = `set ${M.set} · ${SEQS.length} sequences · ctx ${CTX} + ${T - CTX} imagined`;
+  sizeCanvases();
+  go(cur);
+})();
+</script>
+</body>
+</html>
